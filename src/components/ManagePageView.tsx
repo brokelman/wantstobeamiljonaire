@@ -10,7 +10,6 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import {
-  calculateEnterpriseValuation,
   validateIdeaInput,
   buildShortSummary,
   type VentureIdea,
@@ -62,9 +61,7 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
     problemStatement: '',
     aiSolution: '',
     targetMarket: '',
-    monthlyPriceEur: 750,
-    targetCustomers: 180,
-    arrMultiple: 8,
+    revenueModel: '',
   });
   const [ideaErrors, setIdeaErrors] = useState<string[]>([]);
 
@@ -115,9 +112,7 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
       problemStatement: idea.problemStatement,
       aiSolution: idea.aiSolution,
       targetMarket: idea.targetMarket,
-      monthlyPriceEur: idea.monthlyPriceEur,
-      targetCustomers: idea.targetCustomers,
-      arrMultiple: idea.arrMultiple,
+      revenueModel: idea.revenueModel,
     });
   };
 
@@ -127,11 +122,6 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
       setIdeaErrors(check.errors);
       return;
     }
-    const newVal = calculateEnterpriseValuation(
-      editIdeaForm.monthlyPriceEur,
-      editIdeaForm.targetCustomers,
-      editIdeaForm.arrMultiple
-    );
     await onUpdateIdea(ideaId, {
       title: editIdeaForm.title.trim(),
       founderName: editIdeaForm.founderName.trim(),
@@ -139,10 +129,7 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
       problemStatement: editIdeaForm.problemStatement.trim(),
       aiSolution: editIdeaForm.aiSolution.trim(),
       targetMarket: editIdeaForm.targetMarket.trim(),
-      monthlyPriceEur: Number(editIdeaForm.monthlyPriceEur),
-      targetCustomers: Number(editIdeaForm.targetCustomers),
-      arrMultiple: Number(editIdeaForm.arrMultiple),
-      estimatedValuationEur: newVal,
+      revenueModel: editIdeaForm.revenueModel.trim(),
     });
     setEditingIdeaId(null);
     setIdeaErrors([]);
@@ -157,7 +144,7 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
             Beheer & Edit — Vrienden en Ideeën
           </h2>
           <p className="text-sm text-slate-400 mt-1">
-            Voeg vrienden of €10M+ AI-ideeën toe, pas bestaande gegevens aan of verwijder ze direct.
+            Voeg vrienden of AI-ideeën toe, pas bestaande teksten of het verdienmodel aan of verwijder ze direct.
           </p>
         </div>
         <button
@@ -364,7 +351,7 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
                 Ingediende Ideeën Beheren ({ideas.length} ideeën)
               </h3>
               <p className="text-xs text-slate-400">
-                Pas bestaande ideeën aan of verwijder ideeën die afvallen.
+                Pas bestaande ideeën of het verdienmodel aan of verwijder ideeën die afvallen.
               </p>
             </div>
           </div>
@@ -384,7 +371,7 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
               Er staan momenteel 0 ideeën in de tool.
             </p>
             <p className="text-xs text-slate-400 max-w-md mx-auto">
-              Klik op onderstaande knop om het eerste &gt;€10M AI-idee voor een van de vrienden (Jurjen, Hans Guido, Gertjan, Erik, Matthijs, Martijn, Frank, Hermen of Rob) toe te voegen.
+              Klik op onderstaande knop om het eerste AI-idee voor een van de vrienden (Jurjen, Hans Guido, Gertjan, Erik, Matthijs, Martijn, Frank, Hermen of Rob) toe te voegen.
             </p>
             <button
               type="button"
@@ -392,7 +379,7 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
               className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors"
             >
               <Plus className="w-4 h-4" />
-              <span>Eerste €10M+ Idee Toevoegen</span>
+              <span>Eerste Idee Toevoegen</span>
             </button>
           </div>
         ) : (
@@ -489,49 +476,21 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-3">
-                        <div>
-                          <label className="block text-xs text-slate-400 mb-1">Maandprijs (€)</label>
-                          <input
-                            type="number"
-                            value={editIdeaForm.monthlyPriceEur}
-                            onChange={(e) =>
-                              setEditIdeaForm({
-                                ...editIdeaForm,
-                                monthlyPriceEur: Number(e.target.value),
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-[#111827] border border-slate-700 rounded-lg text-xs font-mono text-slate-100"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-400 mb-1">Doelklanten</label>
-                          <input
-                            type="number"
-                            value={editIdeaForm.targetCustomers}
-                            onChange={(e) =>
-                              setEditIdeaForm({
-                                ...editIdeaForm,
-                                targetCustomers: Number(e.target.value),
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-[#111827] border border-slate-700 rounded-lg text-xs font-mono text-slate-100"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-400 mb-1">Multiple (x ARR)</label>
-                          <input
-                            type="number"
-                            value={editIdeaForm.arrMultiple}
-                            onChange={(e) =>
-                              setEditIdeaForm({
-                                ...editIdeaForm,
-                                arrMultiple: Number(e.target.value),
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-[#111827] border border-slate-700 rounded-lg text-xs font-mono text-slate-100"
-                          />
-                        </div>
+                      <div>
+                        <label className="block text-xs text-amber-400 font-medium mb-1">
+                          Hoe denk je er geld mee te verdienen? (Verdienmodel)
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={editIdeaForm.revenueModel}
+                          onChange={(e) =>
+                            setEditIdeaForm({
+                              ...editIdeaForm,
+                              revenueModel: e.target.value,
+                            })
+                          }
+                          className="w-full px-3 py-2 bg-[#111827] border border-slate-700 rounded-lg text-xs text-slate-100"
+                        />
                       </div>
 
                       <div className="flex justify-end gap-2 pt-2">
@@ -554,17 +513,16 @@ export const ManagePageView: React.FC<ManagePageViewProps> = ({
                   ) : (
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
                           <span className="font-semibold text-amber-400">{idea.founderName}</span>
                           <span>·</span>
                           <span>{idea.targetMarket}</span>
-                          <span>·</span>
-                          <span className="font-mono tabular-nums text-emerald-400">
-                            €{(idea.estimatedValuationEur / 1_000_000).toFixed(2)}M waardering
-                          </span>
                         </div>
                         <h4 className="text-sm font-bold text-slate-100 font-display">{idea.title}</h4>
-                        <p className="text-xs text-slate-400 line-clamp-2">{idea.shortSummary}</p>
+                        <p className="text-xs text-slate-300 line-clamp-2">{idea.shortSummary}</p>
+                        <p className="text-xs text-amber-300/90">
+                          <strong className="text-slate-400">Verdienmodel:</strong> {idea.revenueModel}
+                        </p>
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">

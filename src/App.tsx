@@ -8,10 +8,10 @@ import {
   Clock,
   ThumbsUp,
   UserPlus,
-  Sparkles,
   Cloud,
   Settings,
   Trash2,
+  FileText,
 } from 'lucide-react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
@@ -33,8 +33,6 @@ import {
 } from './firebase';
 import {
   filterIdeas,
-  calculateAnnualRecurringRevenue,
-  calculateEnterpriseValuation,
   buildShortSummary,
   validateIdeaInput,
   generateDeterministicDotAdvice,
@@ -52,8 +50,8 @@ import { ManagePageView } from './components/ManagePageView';
 
 type ActiveTab = 'ideas' | 'manage' | 'dot_bridge' | 'methodology';
 
-const LOCAL_STORAGE_IDEAS_KEY = 'tienmiljoen_lab_ideas_v2';
-const LOCAL_STORAGE_FOUNDERS_KEY = 'tienmiljoen_lab_founders_v2';
+const LOCAL_STORAGE_IDEAS_KEY = 'tienmiljoen_lab_ideas_v3';
+const LOCAL_STORAGE_FOUNDERS_KEY = 'tienmiljoen_lab_founders_v3';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('ideas');
@@ -167,11 +165,8 @@ export default function App() {
               problemStatement: d.problemStatement,
               aiSolution: d.aiSolution,
               targetMarket: d.targetMarket,
+              revenueModel: d.revenueModel || 'Nog in te vullen',
               stage: d.stage,
-              monthlyPriceEur: d.monthlyPriceEur,
-              targetCustomers: d.targetCustomers,
-              arrMultiple: d.arrMultiple,
-              estimatedValuationEur: d.estimatedValuationEur,
               votesCount: d.votesCount,
               dotVerdict: d.dotVerdict,
               dotScore: d.dotScore,
@@ -228,11 +223,8 @@ export default function App() {
         problemStatement: idea.problemStatement.slice(0, 1500),
         aiSolution: idea.aiSolution.slice(0, 1500),
         targetMarket: idea.targetMarket.slice(0, 200),
+        revenueModel: idea.revenueModel.slice(0, 1500),
         stage: idea.stage,
-        monthlyPriceEur: idea.monthlyPriceEur,
-        targetCustomers: idea.targetCustomers,
-        arrMultiple: idea.arrMultiple,
-        estimatedValuationEur: idea.estimatedValuationEur,
         votesCount: idea.votesCount,
         dotVerdict: idea.dotVerdict,
         dotScore: idea.dotScore,
@@ -299,20 +291,14 @@ export default function App() {
         problemStatement: input.problemStatement.trim().slice(0, 1500),
         aiSolution: input.aiSolution.trim().slice(0, 1500),
         targetMarket: input.targetMarket.trim().slice(0, 200),
+        revenueModel: input.revenueModel.trim().slice(0, 1500),
         stage: 'idea',
-        monthlyPriceEur: input.monthlyPriceEur,
-        targetCustomers: input.targetCustomers,
-        arrMultiple: input.arrMultiple,
-        estimatedValuationEur: calculateEnterpriseValuation(
-          input.monthlyPriceEur,
-          input.targetCustomers,
-          input.arrMultiple
-        ),
         votesCount: 1,
         dotVerdict: 'pending',
         dotScore: 0,
         dotSummaryAdvice: 'Wacht op validatie door de ChatGPT Dot van Jurjen.',
-        dotNextSteps: 'Klik op "Valideer met Dot van Jurjen" om direct een analyse en vervolgstappen te genereren.',
+        dotNextSteps:
+          'Kopieer of mail het gegenereerde tekstdocument (Stap 1) naar de Dot van Jurjen en voer daarna de feedback in bij Stap 2.',
         dotCriticalRisk: 'Nog niet geanalyseerd.',
         createdAt: now,
         updatedAt: now,
@@ -328,7 +314,7 @@ export default function App() {
       ]);
     }
     await syncIdeaToFirestoreIfSignedIn(created, true);
-    showToast(`Idee "${created.title}" van ${created.founderName} toegevoegd!`);
+    showToast(`Idee "${created.title}" opgeslagen! Tekstdocument voor de Dot van Jurjen staat klaar (Stap 1).`);
   };
 
   const handleUpdateIdea = async (ideaId: string, updatedFields: Partial<VentureIdea>) => {
@@ -409,21 +395,6 @@ export default function App() {
     await handleUpdateIdea(ideaId, { stage });
   };
 
-  const handleUpdateEconomics = async (
-    ideaId: string,
-    monthlyPriceEur: number,
-    targetCustomers: number,
-    arrMultiple: number
-  ) => {
-    const newVal = calculateEnterpriseValuation(monthlyPriceEur, targetCustomers, arrMultiple);
-    await handleUpdateIdea(ideaId, {
-      monthlyPriceEur,
-      targetCustomers,
-      arrMultiple,
-      estimatedValuationEur: newVal,
-    });
-  };
-
   const handleTriggerDotValidation = async (ideaId: string) => {
     setIsValidatingDot(true);
     try {
@@ -446,7 +417,7 @@ export default function App() {
           if (item.id !== ideaId) return item;
           if (updatedIdea) {
             syncIdeaToFirestoreIfSignedIn(updatedIdea, false);
-            showToast(`De Dot van Jurjen heeft "${updatedIdea.title}" gevalideerd (Score: ${updatedIdea.dotScore}/100)!`);
+            showToast(`Concept-feedback van de Dot van Jurjen ingevuld voor "${updatedIdea.title}"!`);
             return updatedIdea;
           }
           const fallback = generateDeterministicDotAdvice(item);
@@ -461,7 +432,7 @@ export default function App() {
             updatedAt: new Date().toISOString(),
           };
           syncIdeaToFirestoreIfSignedIn(next, false);
-          showToast(`De Dot van Jurjen heeft "${next.title}" gevalideerd (Score: ${next.dotScore}/100)!`);
+          showToast(`Concept-feedback van de Dot van Jurjen ingevuld voor "${next.title}"!`);
           return next;
         })
       );
@@ -478,6 +449,7 @@ export default function App() {
       dotSummaryAdvice: string;
       dotNextSteps: string;
       dotCriticalRisk: string;
+      nextStage?: VentureStage;
     }
   ) => {
     let updatedIdea: VentureIdea | null = null;
@@ -506,11 +478,11 @@ export default function App() {
           dotSummaryAdvice: payload.dotSummaryAdvice,
           dotNextSteps: payload.dotNextSteps,
           dotCriticalRisk: payload.dotCriticalRisk,
-          stage: item.stage === 'idea' ? (payload.dotVerdict === 'go' ? 'business_case' : 'validated') : item.stage,
+          stage: payload.nextStage || (item.stage === 'idea' ? (payload.dotVerdict === 'go' ? 'business_case' : 'validated') : item.stage),
           updatedAt: new Date().toISOString(),
         };
         syncIdeaToFirestoreIfSignedIn(next, false);
-        showToast(`Advies van de Dot van Jurjen opgeslagen bij "${next.title}".`);
+        showToast(`Feedback van de Dot van Jurjen & volgende stap opgeslagen bij "${next.title}"!`);
         return next;
       })
     );
@@ -613,12 +585,8 @@ export default function App() {
   };
 
   // Summary metrics across all ideas
-  const totalTenMillionCases = ideas.filter((i) => i.estimatedValuationEur >= 10_000_000).length;
+  const dotValidatedCount = ideas.filter((i) => i.dotVerdict !== 'pending').length;
   const dotGoCases = ideas.filter((i) => i.dotVerdict === 'go').length;
-  const highestValuationEur = ideas.reduce(
-    (max, i) => (i.estimatedValuationEur > max ? i.estimatedValuationEur : max),
-    0
-  );
 
   // Count ideas per friend
   const countByFounder = useMemo(() => {
@@ -679,7 +647,7 @@ export default function App() {
                 : 'border-transparent hover:text-slate-200'
             }`}
           >
-            Dot van Jurjen Koppeling
+            Dot Tekstdocument & Feedback
           </button>
           <button
             type="button"
@@ -690,7 +658,7 @@ export default function App() {
                 : 'border-transparent hover:text-slate-200'
             }`}
           >
-            Van Idee naar €10M+ Methode
+            Werkwijze
           </button>
         </nav>
 
@@ -702,7 +670,7 @@ export default function App() {
             className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
           >
             <Plus className="w-4 h-4" />
-            <span>Nieuw €10M+ Idee Indienen</span>
+            <span>Nieuw Idee Indienen</span>
           </button>
         </div>
       </header>
@@ -734,7 +702,7 @@ export default function App() {
             activeTab === 'dot_bridge' ? 'bg-amber-400 text-slate-950 font-semibold' : 'text-slate-300'
           }`}
         >
-          Dot van Jurjen Koppeling
+          Dot Tekstdocument & Feedback
         </button>
         <button
           type="button"
@@ -743,7 +711,7 @@ export default function App() {
             activeTab === 'methodology' ? 'bg-amber-400 text-slate-950 font-semibold' : 'text-slate-300'
           }`}
         >
-          Van Idee naar €10M+ Methode
+          Werkwijze
         </button>
       </div>
 
@@ -761,9 +729,9 @@ export default function App() {
         {/* Executive Context & KPI Strip */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="p-4 bg-[#111827] border border-slate-800 rounded-xl">
-            <div className="text-xs text-slate-400">Vriendengroep & Ideeënpijplijn</div>
+            <div className="text-xs text-slate-400">Vriendengroep & Ideeën</div>
             <div className="text-2xl font-bold font-mono tabular-nums text-slate-100 mt-1">
-              {ideas.length} cases · {founders.length} vrienden
+              {ideas.length} ideeën · {founders.length} vrienden
             </div>
             <div className="text-xs text-slate-400 mt-1">
               Georganiseerd per naam buiten de vergaderzaal
@@ -771,28 +739,28 @@ export default function App() {
           </div>
 
           <div className="p-4 bg-[#111827] border border-slate-800 rounded-xl">
-            <div className="text-xs text-slate-400">&gt;€10 Miljoen Business Cases</div>
-            <div className="text-2xl font-bold font-mono tabular-nums text-emerald-400 mt-1">
-              {totalTenMillionCases} van {ideas.length} ideeën
+            <div className="text-xs text-slate-400">Stap 1: Tekstdocument voor Jurjen’s Dot</div>
+            <div className="text-2xl font-bold font-mono tabular-nums text-amber-400 mt-1">
+              Direct Kopiëren & Mailen
             </div>
-            <div className="text-xs text-slate-400 mt-1 font-mono tabular-nums">
-              Hoogste case: €{(highestValuationEur / 1_000_000).toFixed(1)}M waardering
+            <div className="text-xs text-slate-400 mt-1">
+              Inclusief probleem, AI-oplossing & verdienmodel
             </div>
           </div>
 
           <div className="p-4 bg-[#111827] border border-slate-800 rounded-xl">
-            <div className="text-xs text-slate-400">Oordeel: De Dot van Jurjen (Advisory Board)</div>
-            <div className="text-2xl font-bold font-mono tabular-nums text-amber-400 mt-1">
-              {dotGoCases} GO · {ideas.length - dotGoCases} In Review/Pivot
+            <div className="text-xs text-slate-400">Stap 2: Feedback van Dot & Volgende Stap</div>
+            <div className="text-2xl font-bold font-mono tabular-nums text-emerald-400 mt-1">
+              {dotValidatedCount} van {ideas.length} beoordeeld ({dotGoCases} GO)
             </div>
             <div className="text-xs text-slate-400 mt-1">
-              Directe AI-validatie + vervolgstappen
+              Gebruik Dot-feedback voor de volgende stap
             </div>
           </div>
 
           <div className="p-4 bg-[#111827] border border-slate-800 rounded-xl flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-400">Cloud & Dot API Synchronisatie</span>
+              <span className="text-xs text-slate-400">Cloud Synchronisatie</span>
               <Cloud className="w-4 h-4 text-slate-400" />
             </div>
             <div className="mt-2 flex items-center justify-between gap-2">
@@ -811,7 +779,7 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <span className="text-xs text-slate-300">Live Server + Firebase Ready</span>
+                  <span className="text-xs text-slate-300">Opslag Actief</span>
                   <button
                     type="button"
                     onClick={() => signInWithGoogle().catch(() => {})}
@@ -838,7 +806,12 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'dot_bridge' && <JurjenDotBridgeView ideas={ideas} />}
+        {activeTab === 'dot_bridge' && (
+          <JurjenDotBridgeView
+            ideas={ideas}
+            onSubmitManualDotAdvice={handleSubmitManualDotAdvice}
+          />
+        )}
 
         {activeTab === 'methodology' && <MethodologyView founders={founders} />}
 
@@ -855,7 +828,7 @@ export default function App() {
                     Filter Ideeën per Naam ({founders.length} Vrienden)
                   </h2>
                   <p className="text-xs text-slate-400">
-                    Klik op een naam om direct alle ingediende AI-businesscases, samenvattingen en adviezen van Jurjen’s Dot voor die persoon te bekijken.
+                    Klik op een naam om de ingediende ideeën, het verdienmodel, het gegenereerde tekstdocument voor Jurjen’s Dot (Stap 1) en de vervolgstappen (Stap 2) te bekijken.
                   </p>
                 </div>
 
@@ -938,8 +911,8 @@ export default function App() {
                   <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="search"
-                    aria-label="Zoek op idee, markt of samenvatting"
-                    placeholder="Zoek op idee, naam of doelmarkt..."
+                    aria-label="Zoek op idee, markt of verdienmodel"
+                    placeholder="Zoek op idee, naam of verdienmodel..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-100 focus:outline-none focus:border-amber-500"
@@ -954,10 +927,10 @@ export default function App() {
                     className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-200"
                   >
                     <option value="ALL">Alle Fases (1 t/m 4)</option>
-                    <option value="idea">1. Ruwe Brainstorm</option>
-                    <option value="validated">2. Gevalideerd door Jurjen’s Dot</option>
-                    <option value="business_case">3. €10M+ Business Case Klaar</option>
-                    <option value="execution">4. In 90-Dagen Executie</option>
+                    <option value="idea">1. Idee & Verdienmodel</option>
+                    <option value="validated">2. Dot Feedback Ontvangen</option>
+                    <option value="business_case">3. Uitwerking & Validatie</option>
+                    <option value="execution">4. Klantpilots & Bouw</option>
                   </select>
                 </div>
 
@@ -969,9 +942,9 @@ export default function App() {
                     className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-200"
                   >
                     <option value="ALL">Alle Oordelen van Dot van Jurjen</option>
-                    <option value="go">GO — &gt;€10M Haalbaar</option>
+                    <option value="go">GO — Kansrijke Case</option>
                     <option value="pivot">PIVOT — Aanpassing Vereist</option>
-                    <option value="no_go">NO-GO — Onvoldoende Schaal</option>
+                    <option value="no_go">NO-GO — Afvallen</option>
                     <option value="pending">Wacht op Validatie</option>
                   </select>
                 </div>
@@ -987,7 +960,7 @@ export default function App() {
                     : `Nog geen ideeën gevonden voor ${selectedFounder === 'ALL' ? 'dit filter' : selectedFounder}`}
                 </h3>
                 <p className="text-sm text-slate-400 max-w-xl mx-auto leading-relaxed">
-                  Selecteer een naam ({founders.map((f) => f.name).join(', ')}) en dien het eerste &gt;€10M AI-idee in. De ChatGPT Dot van Jurjen staat klaar om elk idee te voorzien van een samenvatting, validatiescore en concrete vervolgstappen.
+                  Selecteer een naam ({founders.map((f) => f.name).join(', ')}) en dien het eerste AI-idee in (inclusief hoe je denkt er geld mee te verdienen). Daarna genereert de site direct een tekstdocument om te plakken of te mailen naar de Dot van Jurjen.
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                   <button
@@ -998,7 +971,7 @@ export default function App() {
                     <Plus className="w-4 h-4" />
                     <span>
                       {selectedFounder === 'ALL'
-                        ? 'Eerste €10M+ Idee Indienen'
+                        ? 'Eerste Idee Indienen'
                         : `Idee Indienen voor ${selectedFounder}`}
                     </span>
                   </button>
@@ -1035,8 +1008,6 @@ export default function App() {
 
                   {filteredIdeas.map((idea) => {
                     const isSelected = activeIdea?.id === idea.id;
-                    const arr = calculateAnnualRecurringRevenue(idea.monthlyPriceEur, idea.targetCustomers);
-                    const is10M = idea.estimatedValuationEur >= 10_000_000;
 
                     return (
                       <div
@@ -1052,13 +1023,7 @@ export default function App() {
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold text-amber-400">{idea.founderName}</span>
                             <span aria-hidden="true">·</span>
-                            <span className="font-mono tabular-nums">
-                              Waardering: €{(idea.estimatedValuationEur / 1_000_000).toFixed(1)}M
-                            </span>
-                            <span aria-hidden="true">·</span>
-                            <span className="font-mono tabular-nums">
-                              ARR: €{(arr / 1_000_000).toFixed(2)}M
-                            </span>
+                            <span>{idea.targetMarket}</span>
                           </div>
 
                           <div className="flex items-center gap-1 text-xs font-mono tabular-nums">
@@ -1083,7 +1048,7 @@ export default function App() {
                             {idea.dotVerdict === 'pending' && (
                               <span className="text-slate-400 inline-flex items-center gap-1">
                                 <Clock className="w-3.5 h-3.5" />
-                                Wacht op Dot
+                                Stap 1 klaar voor Dot
                               </span>
                             )}
                           </div>
@@ -1097,35 +1062,20 @@ export default function App() {
                           {idea.shortSummary}
                         </p>
 
-                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[11px] text-slate-400">
-                          <span className="truncate">
-                            <strong className="text-slate-300">Dot Advies:</strong> {idea.dotSummaryAdvice}
-                          </span>
-                          <span className="inline-flex items-center gap-1 font-mono tabular-nums text-slate-300 shrink-0">
-                            <ThumbsUp className="w-3 h-3 text-amber-400" />
-                            {idea.votesCount}
-                          </span>
+                        <div className="text-xs text-amber-300/90 line-clamp-1">
+                          <strong className="text-slate-400">Verdienmodel:</strong> {idea.revenueModel}
                         </div>
 
-                        <div className="flex items-center justify-between pt-1">
-                          <span className={`text-[11px] font-mono tabular-nums ${is10M ? 'text-emerald-400' : 'text-amber-400'}`}>
-                            {is10M
-                              ? `✓ >€10M Doel Gehaald (${idea.targetCustomers} klanten @ €${idea.monthlyPriceEur}/mnd)`
-                              : `Onder €10M drempel (€${idea.monthlyPriceEur}/mnd)`}
+                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                          <span className="inline-flex items-center gap-1 text-slate-300">
+                            <FileText className="w-3 h-3 text-amber-400" />
+                            <span>Tekstdocument & Dot Feedback →</span>
                           </span>
                           <div className="flex items-center gap-3">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedIdeaId(idea.id);
-                                handleTriggerDotValidation(idea.id);
-                              }}
-                              className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 hover:text-amber-300"
-                            >
-                              <Sparkles className="w-3 h-3" />
-                              <span>Valideer met Dot</span>
-                            </button>
+                            <span className="inline-flex items-center gap-1 font-mono tabular-nums text-slate-300">
+                              <ThumbsUp className="w-3 h-3 text-amber-400" />
+                              {idea.votesCount}
+                            </span>
                             <button
                               type="button"
                               aria-label={`Verwijder ${idea.title}`}
@@ -1151,7 +1101,6 @@ export default function App() {
                       idea={activeIdea}
                       onVote={handleVote}
                       onStageChange={handleStageChange}
-                      onUpdateEconomics={handleUpdateEconomics}
                       onTriggerDotValidation={handleTriggerDotValidation}
                       onSubmitManualDotAdvice={handleSubmitManualDotAdvice}
                       isValidatingDot={isValidatingDot}
@@ -1166,8 +1115,8 @@ export default function App() {
 
       {/* Quiet Footer */}
       <footer className="mt-12 border-t border-slate-800/80 py-6 px-6 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-4 max-w-[1400px] w-full mx-auto">
-        <span>TienMiljoen Lab — Gedeelde €10M+ AI Venture Werkplaats voor jullie vriendengroep</span>
-        <span>Advisory Board gekoppeld aan de ChatGPT Dot van Jurjen (/api/openapi.json)</span>
+        <span>TienMiljoen Lab — Gedeelde AI Venture Werkplaats voor jullie vriendengroep</span>
+        <span>Stap 1: Tekstdocument voor de Dot van Jurjen · Stap 2: Feedback & Volgende Stap</span>
       </footer>
 
       <NewIdeaModal

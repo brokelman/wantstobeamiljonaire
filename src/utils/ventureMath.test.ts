@@ -1,53 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  calculateAnnualRecurringRevenue,
-  calculateEnterpriseValuation,
-  isTenMillionPlusCase,
-  calculateCustomersNeededForTenMillion,
-  calculateFounderExitPayout,
   validateIdeaInput,
+  generateDotTextDocument,
   generateDeterministicDotAdvice,
   filterIdeas,
   type VentureIdea,
 } from './ventureMath';
 
-test('calculateAnnualRecurringRevenue computes 12x monthly revenue across customers', () => {
-  assert.equal(calculateAnnualRecurringRevenue(500, 250), 1_500_000);
-  assert.equal(calculateAnnualRecurringRevenue(0, 250), 0);
-});
-
-test('calculateEnterpriseValuation & isTenMillionPlusCase verify >10M EUR business cases', () => {
-  // €500/mo * 12 * 250 customers = €1.5M ARR * 8x multiple = €12.0M valuation
-  const val = calculateEnterpriseValuation(500, 250, 8);
-  assert.equal(val, 12_000_000);
-  assert.equal(isTenMillionPlusCase(val), true);
-
-  const smallVal = calculateEnterpriseValuation(100, 100, 6);
-  assert.equal(smallVal, 720_000);
-  assert.equal(isTenMillionPlusCase(smallVal), false);
-});
-
-test('calculateCustomersNeededForTenMillion reverse-engineers customer target', () => {
-  // At €1,000/mo (€12,000/yr) and 8x multiple (€96,000 valuation per customer), 10M / 96k = 105 customers
-  assert.equal(calculateCustomersNeededForTenMillion(1000, 8), 105);
-});
-
-test('calculateFounderExitPayout splits exit value across the 10 friends', () => {
-  // €12.5M valuation, 10 founders, 80% retained equity = €1,000,000 per friend
-  assert.equal(calculateFounderExitPayout(12_500_000, 10, 80), 1_000_000);
-});
-
-test('validateIdeaInput rejects empty or invalid form submissions', () => {
+test('validateIdeaInput validates text revenueModel instead of numeric price/customer/multiplier fields', () => {
   const invalid = validateIdeaInput({
     title: 'AI',
     founderName: '',
     problemStatement: 'Te kort',
     aiSolution: 'Kort',
     targetMarket: '',
-    monthlyPriceEur: 0,
-    targetCustomers: -5,
-    arrMultiple: 8,
+    revenueModel: ' €',
   });
   assert.equal(invalid.valid, false);
   assert.ok(invalid.errors.length >= 5);
@@ -58,32 +26,62 @@ test('validateIdeaInput rejects empty or invalid form submissions', () => {
     problemStatement: 'Aannemers verliezen honderden uren aan handmatige calculaties en aanbestedingen.',
     aiSolution: 'Autonome AI-agent die bouwtekeningen en bestekken uitleest en direct offertes genereert.',
     targetMarket: 'Middelgrote bouwbedrijven in de Benelux',
-    monthlyPriceEur: 750,
-    targetCustomers: 200,
-    arrMultiple: 8,
+    revenueModel: 'Maandelijks SaaS-abonnement voor bouwbedrijven plus een succesfee per gewonnen aanbesteding.',
   });
   assert.equal(valid.valid, true);
   assert.equal(valid.errors.length, 0);
 });
 
-test('generateDeterministicDotAdvice produces structured validation from Jurjens Dot', () => {
+test('generateDotTextDocument creates structured copyable and mailable text document for Jurjens Dot', () => {
+  const sampleIdea: VentureIdea = {
+    id: 'idea-1',
+    title: 'BouwBestek AI Agent',
+    founderName: 'Hans Guido',
+    authorUid: 'u1',
+    shortSummary: 'AI-oplossing voor bouwbedrijven die automatisch bestekken doorrekent.',
+    problemStatement: 'Calculators zijn 40 uur kwijt per bestek.',
+    aiSolution: 'AI leest PDF en CAD tekeningen direct uit.',
+    targetMarket: 'Aannemers in Nederland',
+    revenueModel: 'Vast maandabonnement per calculator + licentie per project.',
+    stage: 'idea',
+    votesCount: 1,
+    dotVerdict: 'pending',
+    dotScore: 0,
+    dotSummaryAdvice: 'Wacht op validatie.',
+    dotNextSteps: 'Stuur naar de Dot van Jurjen.',
+    dotCriticalRisk: 'Nog te bepalen.',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const singleDoc = generateDotTextDocument([sampleIdea], sampleIdea);
+  assert.ok(singleDoc.subject.includes('BouwBestek AI Agent'));
+  assert.ok(singleDoc.subject.includes('Hans Guido'));
+  assert.ok(singleDoc.body.includes('HOE DENKEN WE HIER GELD MEE TE VERDIENEN?'));
+  assert.ok(singleDoc.body.includes('Vast maandabonnement per calculator'));
+  assert.ok(singleDoc.body.includes('VRAAG AAN DE DOT VAN JURJEN'));
+
+  const multiDoc = generateDotTextDocument([sampleIdea]);
+  assert.ok(multiDoc.subject.includes('1 AI-Ideeën'));
+  assert.ok(multiDoc.body.includes('IDEE 1: BOUWBESTEK AI AGENT'));
+});
+
+test('generateDeterministicDotAdvice produces structured validation based on revenueModel text', () => {
   const result = generateDeterministicDotAdvice({
     title: 'BouwBestek AI Agent',
     founderName: 'Jurjen',
     targetMarket: 'Middelgrote bouwbedrijven',
-    problemStatement: 'Handmatige calculaties kosten 40 uur per aanbesteding.',
+    problemStatement: 'Handmatige calculaties kosten 40 uur per aanbesteding en leiden tot dure fouten.',
     aiSolution: 'AI workflow agent gekoppeld aan ERP en CAD.',
-    monthlyPriceEur: 800,
-    targetCustomers: 200,
-    arrMultiple: 8,
+    revenueModel: 'Jaarlijks SaaS abonnement per bouwbedrijf plus succesfee op besparing.',
   });
   assert.equal(result.dotVerdict, 'go');
   assert.ok(result.dotScore >= 80);
   assert.ok(result.dotSummaryAdvice.includes('Jurjen'));
-  assert.ok(result.dotNextSteps.includes('Klantvalidatie'));
+  assert.ok(result.dotNextSteps.includes('Verdienmodel toetsen'));
 });
 
-test('filterIdeas filters accurately by friend name and search query', () => {
+test('filterIdeas filters accurately by friend name and revenueModel search query', () => {
   const mockIdeas: VentureIdea[] = [
     {
       id: '1',
@@ -94,11 +92,8 @@ test('filterIdeas filters accurately by friend name and search query', () => {
       problemStatement: 'Probleem 12345',
       aiSolution: 'Oplossing 12345',
       targetMarket: 'Advocaten',
+      revenueModel: 'Abonnement per advocaat per maand',
       stage: 'validated',
-      monthlyPriceEur: 500,
-      targetCustomers: 300,
-      arrMultiple: 8,
-      estimatedValuationEur: 14_400_000,
       votesCount: 5,
       dotVerdict: 'go',
       dotScore: 88,
@@ -110,18 +105,15 @@ test('filterIdeas filters accurately by friend name and search query', () => {
     },
     {
       id: '2',
-      title: 'Daan Logistics Agent',
-      founderName: 'Daan',
+      title: 'Erik Logistics Agent',
+      founderName: 'Erik',
       authorUid: 'u2',
       shortSummary: 'Samenvatting 2',
       problemStatement: 'Probleem 67890',
       aiSolution: 'Oplossing 67890',
       targetMarket: 'Transportbedrijven',
+      revenueModel: 'Succesfee per bespaarde lege rit',
       stage: 'idea',
-      monthlyPriceEur: 400,
-      targetCustomers: 300,
-      arrMultiple: 8,
-      estimatedValuationEur: 11_520_000,
       votesCount: 3,
       dotVerdict: 'pivot',
       dotScore: 72,
@@ -137,9 +129,9 @@ test('filterIdeas filters accurately by friend name and search query', () => {
   assert.equal(jurjenOnly.length, 1);
   assert.equal(jurjenOnly[0].id, '1');
 
-  const searchTransport = filterIdeas(mockIdeas, { searchQuery: 'transport' });
-  assert.equal(searchTransport.length, 1);
-  assert.equal(searchTransport[0].founderName, 'Daan');
+  const searchSuccesfee = filterIdeas(mockIdeas, { searchQuery: 'succesfee' });
+  assert.equal(searchSuccesfee.length, 1);
+  assert.equal(searchSuccesfee[0].founderName, 'Erik');
 });
 
 test('netlify.toml disables smart secret scanning false positives for Firebase client config', async () => {
@@ -157,5 +149,3 @@ test('Initial seed state starts with 0 ideas and the 9 requested friends', async
     ['Jurjen', 'Hans Guido', 'Gertjan', 'Erik', 'Matthijs', 'Martijn', 'Frank', 'Hermen', 'Rob']
   );
 });
-
-

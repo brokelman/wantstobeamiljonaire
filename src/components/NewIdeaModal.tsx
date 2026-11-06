@@ -1,12 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calculator, AlertCircle, CheckCircle2 } from 'lucide-react';
-import {
-  calculateAnnualRecurringRevenue,
-  calculateEnterpriseValuation,
-  calculateCustomersNeededForTenMillion,
-  validateIdeaInput,
-  type IdeaFormInput,
-} from '../utils/ventureMath';
+import { X, AlertCircle, Banknote } from 'lucide-react';
+import { validateIdeaInput, type IdeaFormInput } from '../utils/ventureMath';
 import type { FounderMember } from '../data/seedIdeas';
 
 interface NewIdeaModalProps {
@@ -36,9 +30,7 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
   const [shortSummary, setShortSummary] = useState('');
   const [problemStatement, setProblemStatement] = useState('');
   const [aiSolution, setAiSolution] = useState('');
-  const [monthlyPriceEur, setMonthlyPriceEur] = useState<number>(750);
-  const [targetCustomers, setTargetCustomers] = useState<number>(180);
-  const [arrMultiple, setArrMultiple] = useState<number>(8);
+  const [revenueModel, setRevenueModel] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -55,10 +47,6 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
   if (!isOpen) return null;
 
   const activeFounder = founderName === '__CUSTOM__' ? customFounderName : founderName;
-  const arr = calculateAnnualRecurringRevenue(monthlyPriceEur, targetCustomers);
-  const valuation = calculateEnterpriseValuation(monthlyPriceEur, targetCustomers, arrMultiple);
-  const customersFor10M = calculateCustomersNeededForTenMillion(monthlyPriceEur, arrMultiple);
-  const isTenMillion = valuation >= 10_000_000;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,9 +57,7 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
       targetMarket,
       problemStatement,
       aiSolution,
-      monthlyPriceEur: Number(monthlyPriceEur),
-      targetCustomers: Number(targetCustomers),
-      arrMultiple: Number(arrMultiple),
+      revenueModel,
     };
 
     const check = validateIdeaInput(payload);
@@ -89,6 +75,7 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
       setShortSummary('');
       setProblemStatement('');
       setAiSolution('');
+      setRevenueModel('');
       onClose();
     } catch (err) {
       setErrors([err instanceof Error ? err.message : 'Kon idee niet opslaan.']);
@@ -108,10 +95,10 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
         <div className="flex items-start justify-between gap-4 pb-5 border-b border-slate-800">
           <div>
             <h2 id="new-idea-dialog-title" className="text-xl font-bold text-slate-100 font-display">
-              Nieuw €10M+ AI-Idee Indienen
+              Nieuw AI-Idee Indienen
             </h2>
             <p className="text-sm text-slate-400 mt-1">
-              Koppel het idee aan je naam, bereken direct de €10M-waardering en zet hem klaar voor de Dot van Jurjen.
+              Koppel het idee aan je naam, beschrijf hoe je denkt er geld mee te verdienen en genereer direct een tekstdocument voor de Dot van Jurjen.
             </p>
           </div>
           <button
@@ -174,7 +161,7 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
 
             <div>
               <label htmlFor="idea-title" className="block text-xs font-medium text-slate-300 mb-1.5">
-                Werknaam van de AI Venture
+                Werknaam van het AI-Idee
               </label>
               <input
                 id="idea-title"
@@ -220,12 +207,12 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label htmlFor="idea-problem" className="block text-xs font-medium text-slate-300 mb-1.5">
-                Welk duur probleem lossen we op? (Min. 10 tekens)
+                Welk pijnlijk probleem lossen we op?
               </label>
               <textarea
                 id="idea-problem"
                 rows={3}
-                placeholder="Hoeveel uren of duizenden euro's verliest deze klant nu per maand aan handmatig werk of fouten?"
+                placeholder="Waar loopt deze doelgroep nu dagelijks op vast? Welk handmatig werk of risico nemen we weg?"
                 value={problemStatement}
                 onChange={(e) => setProblemStatement(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-[#0B0F17] border border-slate-700 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-amber-500"
@@ -234,12 +221,12 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
 
             <div>
               <label htmlFor="idea-solution" className="block text-xs font-medium text-slate-300 mb-1.5">
-                Hoe lost onze AI dit 10x beter op + wat is onze Moat?
+                Hoe lost onze AI dit op?
               </label>
               <textarea
                 id="idea-solution"
                 rows={3}
-                placeholder="Welke brondata, ERP-koppeling of autonome AI-agent bouwen we zodat dit geen simpele ChatGPT-wrapper is?"
+                placeholder="Wat doet de AI-oplossing precies en waarom is dit slimmer dan een losse ChatGPT-prompt?"
                 value={aiSolution}
                 onChange={(e) => setAiSolution(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-[#0B0F17] border border-slate-700 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-amber-500"
@@ -247,79 +234,20 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
             </div>
           </div>
 
-          {/* €10M+ Business Case Calculator Box */}
-          <div className="p-4 bg-[#0B0F17] border border-slate-800 rounded-lg space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                <Calculator className="w-4 h-4 text-amber-400" />
-                <span>De €10 Miljoen Rekensom (Unit Economics)</span>
-              </div>
-              <div className="text-xs font-mono tabular-nums">
-                {isTenMillion ? (
-                  <span className="text-emerald-400 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" />
-                    Voldoet aan &gt;€10M eis (€{(valuation / 1_000_000).toFixed(2)}M waardering)
-                  </span>
-                ) : (
-                  <span className="text-amber-400">
-                    Nog onder €10M doel: je hebt {customersFor10M} klanten nodig bij €{monthlyPriceEur}/mnd
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label htmlFor="idea-price" className="block text-xs text-slate-400 mb-1">
-                  Prijs per klant / maand (€)
-                </label>
-                <input
-                  id="idea-price"
-                  type="number"
-                  min={1}
-                  value={monthlyPriceEur}
-                  onChange={(e) => setMonthlyPriceEur(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-[#111827] border border-slate-700 rounded-lg text-sm font-mono tabular-nums text-slate-100"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="idea-customers" className="block text-xs text-slate-400 mb-1">
-                  Doel aantal klanten (binnen 3 jr)
-                </label>
-                <input
-                  id="idea-customers"
-                  type="number"
-                  min={1}
-                  value={targetCustomers}
-                  onChange={(e) => setTargetCustomers(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-[#111827] border border-slate-700 rounded-lg text-sm font-mono tabular-nums text-slate-100"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="idea-multiple" className="block text-xs text-slate-400 mb-1">
-                  Exit ARR-Multiple (AI SaaS = 6x–10x)
-                </label>
-                <input
-                  id="idea-multiple"
-                  type="number"
-                  min={1}
-                  max={30}
-                  value={arrMultiple}
-                  onChange={(e) => setArrMultiple(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-[#111827] border border-slate-700 rounded-lg text-sm font-mono tabular-nums text-slate-100"
-                />
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-400 font-mono tabular-nums">
-              <span>Jaaromzet (ARR): €{(arr / 1_000_000).toFixed(2)}M</span>
-              <span>·</span>
-              <span>Geschatte Exit Waardering: €{(valuation / 1_000_000).toFixed(2)}M</span>
-              <span>·</span>
-              <span>Per vriend (10 man @ 80% aandeel): €{Math.round((valuation * 0.8) / 10).toLocaleString('nl-NL')}</span>
-            </div>
+          {/* Text Revenue Model Question instead of premature numbers */}
+          <div className="p-4 bg-[#0B0F17] border border-slate-800 rounded-lg space-y-2">
+            <label htmlFor="idea-revenue-model" className="flex items-center gap-2 text-xs font-semibold text-amber-400">
+              <Banknote className="w-4 h-4" />
+              <span>Hoe denk je er geld mee te verdienen? (Verdienmodel in tekst)</span>
+            </label>
+            <textarea
+              id="idea-revenue-model"
+              rows={3}
+              placeholder="Beschrijf in eigen woorden hoe we hier geld mee verdienen. Bijvoorbeeld: een maandelijks abonnement voor kantoren, betalen per gegenereerd dossier, of een succesfee op bespaarde kosten..."
+              value={revenueModel}
+              onChange={(e) => setRevenueModel(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-[#111827] border border-slate-700 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-amber-500"
+            />
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">
@@ -335,7 +263,7 @@ export const NewIdeaModal: React.FC<NewIdeaModalProps> = ({
               disabled={isSubmitting}
               className="px-5 py-2 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
             >
-              {isSubmitting ? 'Bezig met opslaan...' : 'Idee Opslaan & Klaarzetten voor Dot van Jurjen'}
+              {isSubmitting ? 'Bezig met opslaan...' : 'Idee Opslaan & Tekstdocument Genereren'}
             </button>
           </div>
         </form>

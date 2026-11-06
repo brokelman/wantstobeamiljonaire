@@ -6,8 +6,6 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import {
-  calculateAnnualRecurringRevenue,
-  calculateEnterpriseValuation,
   buildShortSummary,
   validateIdeaInput,
   generateDeterministicDotAdvice,
@@ -23,7 +21,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DATA_DIR = path.join(__dirname, 'data');
-const STORE_PATH = path.join(DATA_DIR, 'ideas-store-v2.json');
+const STORE_PATH = path.join(DATA_DIR, 'ideas-store-v3.json');
 
 interface StoreState {
   founders: FounderMember[];
@@ -108,7 +106,6 @@ async function startServer() {
       ideas,
       summary: {
         totalIdeas: ideas.length,
-        tenMillionReadyCount: ideas.filter((i) => i.estimatedValuationEur >= 10_000_000).length,
         validatedByDotCount: ideas.filter((i) => i.dotVerdict !== 'pending').length,
       },
     });
@@ -177,7 +174,7 @@ async function startServer() {
     res.json({ founders: store.founders });
   });
 
-  // 3. Create a new €10M+ AI venture idea
+  // 3. Create a new AI venture idea
   app.post('/api/ideas', (req, res) => {
     const body = req.body ?? {};
     const input = {
@@ -187,9 +184,7 @@ async function startServer() {
       problemStatement: String(body.problemStatement ?? ''),
       aiSolution: String(body.aiSolution ?? ''),
       targetMarket: String(body.targetMarket ?? ''),
-      monthlyPriceEur: Number(body.monthlyPriceEur ?? 0),
-      targetCustomers: Number(body.targetCustomers ?? 0),
-      arrMultiple: Number(body.arrMultiple ?? 8),
+      revenueModel: String(body.revenueModel ?? ''),
     };
 
     const validation = validateIdeaInput(input);
@@ -200,11 +195,6 @@ async function startServer() {
 
     const store = loadStore();
     const now = new Date().toISOString();
-    const valuation = calculateEnterpriseValuation(
-      input.monthlyPriceEur,
-      input.targetCustomers,
-      input.arrMultiple
-    );
 
     const newIdea: VentureIdea = {
       id: `idea-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -215,16 +205,13 @@ async function startServer() {
       problemStatement: input.problemStatement.trim().slice(0, 1500),
       aiSolution: input.aiSolution.trim().slice(0, 1500),
       targetMarket: input.targetMarket.trim().slice(0, 200),
+      revenueModel: input.revenueModel.trim().slice(0, 1500),
       stage: 'idea',
-      monthlyPriceEur: input.monthlyPriceEur,
-      targetCustomers: input.targetCustomers,
-      arrMultiple: input.arrMultiple,
-      estimatedValuationEur: valuation,
       votesCount: 1,
       dotVerdict: 'pending',
       dotScore: 0,
       dotSummaryAdvice: 'Wacht op validatie door de ChatGPT Dot van Jurjen.',
-      dotNextSteps: 'Klik op "Valideer met Dot van Jurjen" of laat Jurjen via de Dot API een advies insturen.',
+      dotNextSteps: 'Kopieer of mail het gegenereerde tekstdocument (Stap 1) naar de Dot van Jurjen en voer daarna de feedback in bij Stap 2.',
       dotCriticalRisk: 'Nog niet geanalyseerd.',
       createdAt: now,
       updatedAt: now,
@@ -243,7 +230,7 @@ async function startServer() {
     res.status(201).json({ idea: newIdea });
   });
 
-  // 4. Vote on an idea or update its stage / unit economics / full content
+  // 4. Vote on an idea or update its stage / revenue model / content
   app.patch('/api/ideas/:id', (req, res) => {
     const store = loadStore();
     const idea = store.ideas.find((i) => i.id === req.params.id);
@@ -271,27 +258,16 @@ async function startServer() {
     if (typeof body.targetMarket === 'string' && body.targetMarket.trim().length >= 2) {
       idea.targetMarket = body.targetMarket.trim().slice(0, 200);
     }
+    if (typeof body.revenueModel === 'string' && body.revenueModel.trim().length >= 5) {
+      idea.revenueModel = body.revenueModel.trim().slice(0, 1500);
+    }
     if (typeof body.stage === 'string' && ['idea', 'validated', 'business_case', 'execution'].includes(body.stage)) {
       idea.stage = body.stage as VentureStage;
-    }
-    if (typeof body.monthlyPriceEur === 'number' && body.monthlyPriceEur > 0) {
-      idea.monthlyPriceEur = body.monthlyPriceEur;
-    }
-    if (typeof body.targetCustomers === 'number' && body.targetCustomers > 0) {
-      idea.targetCustomers = body.targetCustomers;
-    }
-    if (typeof body.arrMultiple === 'number' && body.arrMultiple >= 1 && body.arrMultiple <= 50) {
-      idea.arrMultiple = body.arrMultiple;
     }
     if (body.incrementVote === true) {
       idea.votesCount += 1;
     }
 
-    idea.estimatedValuationEur = calculateEnterpriseValuation(
-      idea.monthlyPriceEur,
-      idea.targetCustomers,
-      idea.arrMultiple
-    );
     idea.updatedAt = new Date().toISOString();
     saveStore(store);
     res.json({ idea });
@@ -305,7 +281,7 @@ async function startServer() {
     res.json({ ideas: store.ideas });
   });
 
-  // 5. Direct Webhook Endpoint for Jurjen's ChatGPT Dot (Custom GPT Action or Manual Paste)
+  // 5. Direct Webhook / Manual Step 2 Endpoint for Jurjen's ChatGPT Dot Feedback
   app.post('/api/ideas/:id/advise', (req, res) => {
     const store = loadStore();
     const idea = store.ideas.find((i) => i.id === req.params.id);
@@ -333,7 +309,9 @@ async function startServer() {
     if (typeof body.dotCriticalRisk === 'string' && body.dotCriticalRisk.trim().length > 0) {
       idea.dotCriticalRisk = body.dotCriticalRisk.trim().slice(0, 1000);
     }
-    if (idea.stage === 'idea') {
+    if (typeof body.nextStage === 'string' && ['idea', 'validated', 'business_case', 'execution'].includes(body.nextStage)) {
+      idea.stage = body.nextStage as VentureStage;
+    } else if (idea.stage === 'idea') {
       idea.stage = idea.dotVerdict === 'go' ? 'business_case' : 'validated';
     }
     idea.updatedAt = new Date().toISOString();
@@ -359,14 +337,13 @@ async function startServer() {
 
     if (ai) {
       try {
-        const arr = calculateAnnualRecurringRevenue(idea.monthlyPriceEur, idea.targetCustomers);
-        const prompt = `Valideer dit AI-businesscase idee voor onze vriendengroep van 10 ondernemers die een >€10.000.000 waardering nastreven:
+        const prompt = `Valideer dit AI-businesscase idee voor onze vriendengroep die een >€10.000.000 bedrijf wil bouwen:
 Titel: ${idea.title}
 Bedenker: ${idea.founderName}
 Doelmarkt: ${idea.targetMarket}
 Probleem: ${idea.problemStatement}
 AI-Oplossing: ${idea.aiSolution}
-Prijsmodel: €${idea.monthlyPriceEur}/maand, doel: ${idea.targetCustomers} klanten, ARR: €${arr}, Geschatte Waardering (${idea.arrMultiple}x ARR): €${idea.estimatedValuationEur}.
+Hoe we denken er geld mee te verdienen (Verdienmodel): ${idea.revenueModel}
 
 Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' (onze AI Advisory Board).`;
 
@@ -375,7 +352,7 @@ Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' 
           contents: prompt,
           config: {
             systemInstruction:
-              'Je bent "De Dot van Jurjen", de scherpe, pragmatische AI Advisory Board van een groep van 10 Nederlandse vrienden die samen een AI-bedrijf van >€10 miljoen euro waardering willen bouwen. Je beoordeelt ideeën streng op: 1) Haalbaarheid van €1,25M+ ARR binnen 36 maanden, 2) Verdedigbare data/workflow moat (geen dunne ChatGPT-wrapper), 3) Concrete executiestappen voor een team van 10 man. Schrijf altijd in helder, zakelijk en motiverend Nederlands.',
+              'Je bent "De Dot van Jurjen", de scherpe, pragmatische AI Advisory Board van een groep van 9 Nederlandse vrienden die samen een AI-bedrijf van >€10 miljoen euro waardering willen bouwen. Je beoordeelt ideeën op: 1) Is het beschreven verdienmodel schaalbaar richting >€10M waarde, 2) Verdedigbare data/workflow moat (geen dunne ChatGPT-wrapper), 3) Concrete vervolgstappen om van idee naar uitwerking en eerste betalende klanten te komen. Schrijf altijd in helder, zakelijk en motiverend Nederlands.',
             responseMimeType: 'application/json',
             responseSchema: {
               type: Type.OBJECT,
@@ -385,7 +362,7 @@ Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' 
                   description: "Kies exact een van: 'go', 'pivot', of 'no_go'",
                 },
                 dotScore: {
-                  type: Type. INTEGER,
+                  type: Type.INTEGER,
                   description: 'Score tussen 1 en 100 voor €10M+ potentie',
                 },
                 shortSummary: {
@@ -394,15 +371,15 @@ Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' 
                 },
                 dotSummaryAdvice: {
                   type: Type.STRING,
-                  description: 'Scherp oordeel van de Dot van Jurjen waarom dit wel/niet €10M+ waard wordt (max 800 tekens)',
+                  description: 'Scherp oordeel van de Dot van Jurjen over het idee en verdienmodel (max 800 tekens)',
                 },
                 dotNextSteps: {
                   type: Type.STRING,
-                  description: '3 genummerde concrete vervolgstappen om van idee naar uitwerking en eerste betalende klanten te komen (max 1000 tekens)',
+                  description: '3 genummerde concrete vervolgstappen om van idee naar uitwerking te komen (max 1000 tekens)',
                 },
                 dotCriticalRisk: {
                   type: Type.STRING,
-                  description: 'Het grootste risico of breekpunt waar de groep op moet letten (max 500 tekens)',
+                  description: 'Het grootste risico of aandachtspunt waar de groep op moet letten (max 500 tekens)',
                 },
               },
               required: [
@@ -468,8 +445,8 @@ Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' 
       info: {
         title: 'TienMiljoen Lab — De Dot van Jurjen Advisory Board API',
         description:
-          'OpenAPI specificatie waarmee de ChatGPT Dot van Jurjen direct alle ingediende €10M+ AI-ideeën van de 10 vrienden per naam kan opvragen én van validatie, score en vervolgadvies kan voorzien.',
-        version: '1.0.0',
+          'OpenAPI specificatie waarmee de ChatGPT Dot van Jurjen direct alle ingediende AI-ideeën en verdienmodellen van de vrienden per naam kan opvragen én van validatie en vervolgstappen kan voorzien.',
+        version: '1.1.0',
       },
       servers: [{ url: baseUrl }],
       paths: {
@@ -483,12 +460,12 @@ Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' 
                 in: 'query',
                 required: false,
                 schema: { type: 'string' },
-                description: 'Filter op naam van de bedenker (bijv. Jurjen, Daan, Bram)',
+                description: 'Filter op naam van de bedenker (bijv. Jurjen, Hans Guido, Gertjan)',
               },
             ],
             responses: {
               '200': {
-                description: 'Lijst van ideeën inclusief samenvatting, €10M-rekensom en huidige Dot-status',
+                description: 'Lijst van ideeën inclusief samenvatting, verdienmodel en huidige Dot-status',
               },
             },
           },
@@ -517,7 +494,6 @@ Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' 
                       dotVerdict: {
                         type: 'string',
                         enum: ['go', 'pivot', 'no_go'],
-                        description: 'Go (>=10M haalbaar), Pivot (aanpassing nodig), of No-Go',
                       },
                       dotScore: {
                         type: 'integer',
@@ -526,15 +502,12 @@ Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' 
                       },
                       dotSummaryAdvice: {
                         type: 'string',
-                        description: 'Kernsamenvatting en validatie door de Dot van Jurjen',
                       },
                       dotNextSteps: {
                         type: 'string',
-                        description: 'Concrete vervolgstappen voor de vriendengroep om dit op te pakken',
                       },
                       dotCriticalRisk: {
                         type: 'string',
-                        description: 'Belangrijkste risico of aandachtspunt',
                       },
                     },
                   },

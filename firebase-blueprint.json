@@ -2,7 +2,7 @@
   "entities": {
     "Idea": {
       "title": "Idea",
-      "description": "An AI business case idea submitted by one of the 10 founders targeting a >10M EUR valuation.",
+      "description": "An AI business case idea submitted by one of the founders targeting a >10M EUR venture.",
       "type": "object",
       "properties": {
         "title": {
@@ -48,30 +48,20 @@
           "minLength": 2,
           "maxLength": 200
         },
+        "revenueModel": {
+          "type": "string",
+          "description": "Text explanation of how the venture plans to make money",
+          "minLength": 5,
+          "maxLength": 1500
+        },
         "stage": {
           "type": "string",
           "description": "Current stage in the 10M Venture Funnel",
           "enum": ["idea", "validated", "business_case", "execution"]
         },
-        "monthlyPriceEur": {
-          "type": "number",
-          "description": "Estimated monthly subscription price in EUR"
-        },
-        "targetCustomers": {
-          "type": "number",
-          "description": "Target customer count within 36 months"
-        },
-        "arrMultiple": {
-          "type": "number",
-          "description": "SaaS valuation multiple (typically 6 to 10)"
-        },
-        "estimatedValuationEur": {
-          "type": "number",
-          "description": "Calculated enterprise valuation in EUR"
-        },
         "votesCount": {
           "type": "number",
-          "description": "Number of founder votes from the 10 friends"
+          "description": "Number of founder votes from the friends"
         },
         "dotVerdict": {
           "type": "string",
@@ -89,7 +79,7 @@
         },
         "dotNextSteps": {
           "type": "string",
-          "description": "Concrete next steps recommended by Jurjen's Dot",
+          "description": "Concrete next steps derived from Jurjen's Dot feedback",
           "maxLength": 2000
         },
         "dotCriticalRisk": {
@@ -116,11 +106,8 @@
         "problemStatement",
         "aiSolution",
         "targetMarket",
+        "revenueModel",
         "stage",
-        "monthlyPriceEur",
-        "targetCustomers",
-        "arrMultiple",
-        "estimatedValuationEur",
         "votesCount",
         "dotVerdict",
         "dotScore",

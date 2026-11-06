@@ -10,11 +10,8 @@ export interface VentureIdea {
   problemStatement: string;
   aiSolution: string;
   targetMarket: string;
+  revenueModel: string;
   stage: VentureStage;
-  monthlyPriceEur: number;
-  targetCustomers: number;
-  arrMultiple: number;
-  estimatedValuationEur: number;
   votesCount: number;
   dotVerdict: DotVerdict;
   dotScore: number;
@@ -32,46 +29,7 @@ export interface IdeaFormInput {
   problemStatement: string;
   aiSolution: string;
   targetMarket: string;
-  monthlyPriceEur: number;
-  targetCustomers: number;
-  arrMultiple: number;
-}
-
-export function calculateAnnualRecurringRevenue(monthlyPriceEur: number, targetCustomers: number): number {
-  if (monthlyPriceEur <= 0 || targetCustomers <= 0) return 0;
-  return Math.round(monthlyPriceEur * 12 * targetCustomers);
-}
-
-export function calculateEnterpriseValuation(
-  monthlyPriceEur: number,
-  targetCustomers: number,
-  arrMultiple: number
-): number {
-  const arr = calculateAnnualRecurringRevenue(monthlyPriceEur, targetCustomers);
-  if (arr <= 0 || arrMultiple <= 0) return 0;
-  return Math.round(arr * arrMultiple);
-}
-
-export function isTenMillionPlusCase(valuationEur: number): boolean {
-  return valuationEur >= 10_000_000;
-}
-
-export function calculateCustomersNeededForTenMillion(
-  monthlyPriceEur: number,
-  arrMultiple: number
-): number {
-  if (monthlyPriceEur <= 0 || arrMultiple <= 0) return 0;
-  const valuePerCustomerPerYear = monthlyPriceEur * 12 * arrMultiple;
-  return Math.ceil(10_000_000 / valuePerCustomerPerYear);
-}
-
-export function calculateFounderExitPayout(
-  valuationEur: number,
-  founderCount: number = 10,
-  retainedEquityPercent: number = 80
-): number {
-  if (valuationEur <= 0 || founderCount <= 0 || retainedEquityPercent <= 0) return 0;
-  return Math.round((valuationEur * (retainedEquityPercent / 100)) / founderCount);
+  revenueModel: string;
 }
 
 export function buildShortSummary(input: IdeaFormInput): string {
@@ -80,9 +38,8 @@ export function buildShortSummary(input: IdeaFormInput): string {
   }
   const cleanTarget = input.targetMarket.trim();
   const cleanSol = input.aiSolution.trim();
-  const arr = calculateAnnualRecurringRevenue(input.monthlyPriceEur, input.targetCustomers);
-  const arrFormatted = (arr / 1_000_000).toFixed(2);
-  const generated = `AI-oplossing voor ${cleanTarget}: ${cleanSol.slice(0, 220)}${cleanSol.length > 220 ? '...' : ''} (Doel: €${arrFormatted}M ARR bij ${input.targetCustomers} klanten).`;
+  const cleanRev = input.revenueModel.trim();
+  const generated = `AI-oplossing voor ${cleanTarget}: ${cleanSol.slice(0, 180)}${cleanSol.length > 180 ? '...' : ''} (Verdienmodel: ${cleanRev.slice(0, 120)}${cleanRev.length > 120 ? '...' : ''})`;
   return generated.slice(0, 600);
 }
 
@@ -104,19 +61,120 @@ export function validateIdeaInput(input: IdeaFormInput): { valid: boolean; error
   if (!input.aiSolution || input.aiSolution.trim().length < 10 || input.aiSolution.trim().length > 1500) {
     errors.push('Leg uit hoe de AI-oplossing werkt en waarde levert (minimaal 10 tekens).');
   }
-  if (!Number.isFinite(input.monthlyPriceEur) || input.monthlyPriceEur <= 0) {
-    errors.push('Vul een geldige maandprijs in euro’s in (groter dan €0).');
-  }
-  if (!Number.isFinite(input.targetCustomers) || input.targetCustomers <= 0) {
-    errors.push('Vul een realistisch doel-aantal klanten in (groter dan 0).');
-  }
-  if (!Number.isFinite(input.arrMultiple) || input.arrMultiple < 1 || input.arrMultiple > 50) {
-    errors.push('De ARR-multiple moet tussen 1x en 50x liggen (standaard voor AI SaaS is 6x–10x).');
+  if (!input.revenueModel || input.revenueModel.trim().length < 5 || input.revenueModel.trim().length > 1500) {
+    errors.push('Beschrijf hoe je denkt er geld mee te verdienen (minimaal 5 tekens).');
   }
 
   return {
     valid: errors.length === 0,
     errors,
+  };
+}
+
+export function generateDotTextDocument(
+  ideas: VentureIdea[],
+  singleIdea?: VentureIdea
+): {
+  subject: string;
+  body: string;
+  filename: string;
+} {
+  const targetList = singleIdea ? [singleIdea] : ideas;
+
+  if (targetList.length === 0) {
+    return {
+      subject: 'Validatieverzoek voor de Dot van Jurjen — TienMiljoen Lab',
+      body: 'Er zijn nog geen ideeën ingevoerd om te valideren.',
+      filename: 'dot-van-jurjen-briefing.txt',
+    };
+  }
+
+  if (singleIdea) {
+    const subject = `Dot van Jurjen Validatieverzoek: ${singleIdea.title} (door ${singleIdea.founderName})`;
+    const slug = singleIdea.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    const body = `TEKSTDOCUMENT VOOR DE CHATGPT DOT VAN JURJEN (ADVISORY BOARD)
+====================================================================
+Project: TienMiljoen Lab (>€10M AI Venture Brainstorm)
+Ingediend door: ${singleIdea.founderName}
+Titel van het idee: ${singleIdea.title}
+Huidige fase: ${singleIdea.stage}
+
+1. KORTE SAMENVATTING
+${singleIdea.shortSummary}
+
+2. SPECIFIEKE DOELMARKT / KLANTSEGMENT
+${singleIdea.targetMarket}
+
+3. WELK PIJNLIJK PROBLEEM LOSSEN WE OP?
+${singleIdea.problemStatement}
+
+4. HOE LOST ONZE AI DIT OP (INCL. VERDEDIGBARE MOAT)?
+${singleIdea.aiSolution}
+
+5. HOE DENKEN WE HIER GELD MEE TE VERDIENEN? (VERDIENMODEL)
+${singleIdea.revenueModel}
+
+====================================================================
+VRAAG AAN DE DOT VAN JURJEN (VOOR STAP 2 OP ONZE SITE):
+Wil je dit idee van ${singleIdea.founderName} beoordelen voor onze vriendengroep op:
+1. OORDEEL (GO / PIVOT / NO-GO) + SCORE (0-100): Heeft dit idee met dit verdienmodel realistische potentie om uit te groeien tot een >€10 miljoen bedrijf?
+2. FEEDBACK OP HET VERDIENMODEL & MOAT: Is de manier waarop we geld willen verdienen schaalbaar en verdedigbaar tegen standaard AI-tools?
+3. CONCRETE VERVOLGSTAP: Welke 3 concrete stappen moeten wij nu als vriendengroep zetten om dit idee van papier naar de volgende fase (klantvalidatie / eerste pilot) te brengen?`;
+
+    return {
+      subject,
+      body,
+      filename: `dot-briefing-${slug || 'idee'}.txt`,
+    };
+  }
+
+  const subject = `Dot van Jurjen Validatieverzoek — Overzicht van ${targetList.length} AI-Ideeën (TienMiljoen Lab)`;
+  const body = `TEKSTDOCUMENT VOOR DE CHATGPT DOT VAN JURJEN (ADVISORY BOARD)
+====================================================================
+Project: TienMiljoen Lab (>€10M AI Venture Brainstorm met de vriendengroep)
+Aantal ingediende ideeën: ${targetList.length}
+
+Hieronder staan de uitgewerkte AI-ideeën per naam, inclusief het beoogde verdienmodel:
+
+${targetList
+  .map(
+    (idea, index) => `--------------------------------------------------------------------
+IDEE ${index + 1}: ${idea.title.toUpperCase()}
+Bedenker: ${idea.founderName}
+Doelmarkt: ${idea.targetMarket}
+
+Korte samenvatting:
+${idea.shortSummary}
+
+Het probleem:
+${idea.problemStatement}
+
+De AI-oplossing:
+${idea.aiSolution}
+
+Hoe denken we hier geld mee te verdienen?
+${idea.revenueModel}
+${
+  idea.dotVerdict !== 'pending'
+    ? `\nReeds ingevoerde Dot-feedback (${idea.dotVerdict.toUpperCase()} - Score ${idea.dotScore}/100):\n${idea.dotSummaryAdvice}\nVolgende stappen:\n${idea.dotNextSteps}`
+    : ''
+}`
+  )
+  .join('\n\n')}
+
+====================================================================
+VRAAG AAN DE DOT VAN JURJEN (VOOR STAP 2 OP ONZE SITE):
+1. Geef per idee (op naam van de bedenker) een eerlijk oordeel (GO / PIVOT / NO-GO) en een score van 0 tot 100.
+2. Geef scherpe feedback op het beschreven verdienmodel: hoe maken we hier een schaalbare >€10M businesscase van?
+3. Formuleer per idee de concrete vervolgstappen zodat wij deze feedback in Stap 2 op onze site kunnen invoeren en gebruiken voor de uitwerking.`;
+
+  return {
+    subject,
+    body,
+    filename: 'dot-van-jurjen-alle-ideeen.txt',
   };
 }
 
@@ -126,9 +184,7 @@ export function generateDeterministicDotAdvice(idea: {
   targetMarket: string;
   problemStatement: string;
   aiSolution: string;
-  monthlyPriceEur: number;
-  targetCustomers: number;
-  arrMultiple: number;
+  revenueModel: string;
 }): {
   dotVerdict: DotVerdict;
   dotScore: number;
@@ -137,49 +193,56 @@ export function generateDeterministicDotAdvice(idea: {
   dotCriticalRisk: string;
   recommendedStage: VentureStage;
 } {
-  const valuation = calculateEnterpriseValuation(
-    idea.monthlyPriceEur,
-    idea.targetCustomers,
-    idea.arrMultiple
-  );
-  const arr = calculateAnnualRecurringRevenue(idea.monthlyPriceEur, idea.targetCustomers);
-  const neededCustomers = calculateCustomersNeededForTenMillion(idea.monthlyPriceEur, idea.arrMultiple);
+  const revLower = idea.revenueModel.toLowerCase();
+  const solLower = idea.aiSolution.toLowerCase();
 
-  const hasB2BPricing = idea.monthlyPriceEur >= 250;
-  const hitsTenMillion = valuation >= 10_000_000;
-  const manageableCustomerCount = idea.targetCustomers <= 2500;
+  const hasRecurringRevenue =
+    revLower.includes('abonnement') ||
+    revLower.includes('saas') ||
+    revLower.includes('licentie') ||
+    revLower.includes('maand') ||
+    revLower.includes('jaar') ||
+    revLower.includes('contract');
 
-  let score = 58;
-  if (hitsTenMillion) score += 18;
-  if (hasB2BPricing) score += 10;
-  if (manageableCustomerCount) score += 7;
-  if (idea.aiSolution.toLowerCase().includes('agent') || idea.aiSolution.toLowerCase().includes('integratie') || idea.aiSolution.toLowerCase().includes('erp') || idea.aiSolution.toLowerCase().includes('workflow')) {
-    score += 5;
-  }
-  score = Math.min(96, Math.max(35, score));
+  const hasValueBasedOrTransaction =
+    revLower.includes('succes') ||
+    revLower.includes('percentage') ||
+    revLower.includes('transactie') ||
+    revLower.includes('besparing') ||
+    revLower.includes('per dossier') ||
+    revLower.includes('per gebruik') ||
+    revLower.includes('fee');
 
-  let verdict: DotVerdict = 'pivot';
-  if (hitsTenMillion && score >= 78) {
-    verdict = 'go';
-  } else if (valuation < 4_000_000 && idea.monthlyPriceEur < 50) {
-    verdict = 'no_go';
-  }
+  const hasDeepWorkflowMoat =
+    solLower.includes('agent') ||
+    solLower.includes('integratie') ||
+    solLower.includes('erp') ||
+    solLower.includes('workflow') ||
+    solLower.includes('data') ||
+    solLower.includes('automatisch');
 
-  const formattedVal = (valuation / 1_000_000).toFixed(1);
-  const formattedArr = (arr / 1_000_000).toFixed(2);
+  let score = 68;
+  if (hasRecurringRevenue) score += 10;
+  if (hasValueBasedOrTransaction) score += 7;
+  if (hasDeepWorkflowMoat) score += 8;
+  if (idea.problemStatement.trim().length > 60) score += 4;
+  score = Math.min(95, Math.max(45, score));
 
-  const summaryAdvice = hitsTenMillion
-    ? `Dot van Jurjen oordeel voor ${idea.founderName}: Sterke €10M+ potentie (geschatte waardering €${formattedVal}M bij €${formattedArr}M ARR). De combinatie van een specifiek pijnpunt in '${idea.targetMarket}' en een prijs van €${idea.monthlyPriceEur}/mnd maakt dat jullie slechts ${neededCustomers} betalende klanten nodig hebben voor de €10M-grens.`
-    : `Dot van Jurjen oordeel voor ${idea.founderName}: De huidige rekensom komt uit op €${formattedVal}M waardering (€${formattedArr}M ARR). Om met 10 man de €10M-grens te kraken moeten jullie óf de ticketprijs verhogen naar een enterprise workflow-niveau, óf doorgroeien naar minimaal ${neededCustomers} klanten in '${idea.targetMarket}'.`;
+  const verdict: DotVerdict = score >= 78 ? 'go' : 'pivot';
+
+  const summaryAdvice =
+    verdict === 'go'
+      ? `Dot van Jurjen oordeel voor ${idea.founderName}: Sterk inhoudelijk fundament in '${idea.targetMarket}'. Het voorgestelde verdienmodel ("${idea.revenueModel.slice(0, 120)}${idea.revenueModel.length > 120 ? '...' : ''}") sluit goed aan bij de waarde die de AI-oplossing levert en biedt een logische route naar een schaalbare >€10M businesscase.`
+      : `Dot van Jurjen oordeel voor ${idea.founderName}: Interessant probleem in '${idea.targetMarket}', maar het verdienmodel ("${idea.revenueModel.slice(0, 120)}${idea.revenueModel.length > 120 ? '...' : ''}") moet nog scherper gekoppeld worden aan directe tijds- of kostenbesparing bij de klant voordat we hier met 9 man vol op inzetten.`;
 
   const nextSteps =
-    `1. Klantvalidatie (Week 1-2): Laat 2 man uit de groep deze week 15 beslissers in '${idea.targetMarket}' bellen met één vraag: 'Betalen jullie €${idea.monthlyPriceEur}/mnd als wij dit probleem 80% autonoom oplossen?'\n` +
-    `2. Concierge MVP (Week 3-4): Bouw nog geen compleet platform; draai de AI-workflow eerst handmatig achter de schermen voor 3 pilotklanten.\n` +
-    `3. Data-Moat vastleggen (Maand 2): Koppel direct aan de bronsystemen van de klant zodat jullie oplossing niet eenvoudig door een standaard ChatGPT-prompt te kopiëren is.`;
+    `1. Verdienmodel toetsen in de markt (Week 1): Benader met 2 vrienden 5 tot 10 bedrijven in '${idea.targetMarket}' en toets of zij bereid zijn te betalen op de manier die ${idea.founderName} voorstelt (${idea.revenueModel.slice(0, 80)}).\n` +
+    `2. Handmatige Pilot / Concierge Test (Week 2-3): Voer de AI-oplossing eerst voor 2 klanten handmatig of met een licht prototype uit om te bewijzen dat het probleem echt wordt opgelost.\n` +
+    `3. Beslismoment met de groep (Week 4): Gebruik de klantreacties en deze Dot-feedback om te bepalen of dit idee doorgaat naar de volledige uitwerking.`;
 
-  const criticalRisk = !hasB2BPricing
-    ? `Lage ticketprijs (€${idea.monthlyPriceEur}/mnd) vereist ${neededCustomers} klanten voor €10M waardering — hoge marketingkosten (CAC) voor een team zonder megabudget.`
-    : `Dunne 'wrapper'-gevaar: als jullie AI-oplossing geen eigen domeindata of directe systeemintegratie in '${idea.targetMarket}' opbouwt, kan een concurrent de prompt binnen 2 weken kopiëren.`;
+  const criticalRisk = !hasRecurringRevenue
+    ? `Let op terugkerende omzet: voor een >€10M waardering kijkt een koper of investeerder sterk naar voorspelbare, terugkerende inkomsten in plaats van eenmalige projecten.`
+    : `Waak voor het 'dunne wrapper'-risico: zorg dat de AI-oplossing diep in het werkproces van '${idea.targetMarket}' zit zodat klanten niet eenvoudig overstappen.`;
 
   return {
     dotVerdict: verdict,
@@ -214,7 +277,7 @@ export function filterIdeas(
     }
     if (options.searchQuery && options.searchQuery.trim().length > 0) {
       const q = options.searchQuery.trim().toLowerCase();
-      const hay = `${idea.title} ${idea.founderName} ${idea.shortSummary} ${idea.targetMarket} ${idea.problemStatement} ${idea.aiSolution}`.toLowerCase();
+      const hay = `${idea.title} ${idea.founderName} ${idea.shortSummary} ${idea.targetMarket} ${idea.problemStatement} ${idea.aiSolution} ${idea.revenueModel}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;

@@ -1,55 +1,100 @@
 import React, { useState } from 'react';
-import { Copy, Check, Terminal, Bot, Share2, FileJson } from 'lucide-react';
-import type { VentureIdea } from '../utils/ventureMath';
+import {
+  Copy,
+  Check,
+  Bot,
+  FileJson,
+  Mail,
+  Download,
+  FileText,
+  ArrowRight,
+  Send,
+} from 'lucide-react';
+import {
+  generateDotTextDocument,
+  type VentureIdea,
+  type DotVerdict,
+  type VentureStage,
+} from '../utils/ventureMath';
 
 interface JurjenDotBridgeViewProps {
   ideas: VentureIdea[];
+  onSubmitManualDotAdvice: (
+    ideaId: string,
+    payload: {
+      dotVerdict: DotVerdict;
+      dotScore: number;
+      dotSummaryAdvice: string;
+      dotNextSteps: string;
+      dotCriticalRisk: string;
+      nextStage?: VentureStage;
+    }
+  ) => Promise<void>;
 }
 
-export const JurjenDotBridgeView: React.FC<JurjenDotBridgeViewProps> = ({ ideas }) => {
+export const JurjenDotBridgeView: React.FC<JurjenDotBridgeViewProps> = ({
+  ideas,
+  onSubmitManualDotAdvice,
+}) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [selectedIdeaIdForDoc, setSelectedIdeaIdForDoc] = useState<string>('ALL');
+  const [recipientEmail, setRecipientEmail] = useState<string>('');
+
+  // Step 2 quick input state
+  const [targetIdeaId, setTargetIdeaId] = useState<string>(ideas[0]?.id || '');
+  const [verdict, setVerdict] = useState<DotVerdict>('go');
+  const [score, setScore] = useState<number>(85);
+  const [feedbackText, setFeedbackText] = useState<string>('');
+  const [nextStepText, setNextStepText] = useState<string>('');
+  const [riskText, setRiskText] = useState<string>('');
 
   const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   const openApiUrl = `${origin}/api/openapi.json`;
-  const ideasApiUrl = `${origin}/api/ideas`;
 
   const copyText = (key: string, text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2200);
+    setTimeout(() => setCopiedKey(null), 2400);
   };
 
-  const dotBriefingPrompt = `Je bent "De Dot van Jurjen", de AI Advisory Board van onze vriendengroep van 10 man. Ons doel is om samen één AI-bedrijf te bouwen met een bedrijfswaardering van >€10 miljoen euro (zodat ieder lid ~€1M+ overhoudt bij exit).
+  const singleSelectedIdea =
+    selectedIdeaIdForDoc !== 'ALL'
+      ? ideas.find((i) => i.id === selectedIdeaIdForDoc)
+      : undefined;
 
-Hieronder staan de huidige ingediende AI-ideeën van onze groep (per naam):
+  const generatedDoc = generateDotTextDocument(ideas, singleSelectedIdea);
+  const mailtoUrl = `mailto:${encodeURIComponent(recipientEmail.trim())}?subject=${encodeURIComponent(
+    generatedDoc.subject
+  )}&body=${encodeURIComponent(generatedDoc.body)}`;
 
-${ideas
-  .map(
-    (idea, idx) =>
-      `${idx + 1}. [${idea.founderName}] "${idea.title}" (ID: ${idea.id})
-   - Doelmarkt: ${idea.targetMarket}
-   - Samenvatting: ${idea.shortSummary}
-   - Probleem: ${idea.problemStatement}
-   - AI-Oplossing: ${idea.aiSolution}
-   - Rekensom: €${idea.monthlyPriceEur}/mnd × ${idea.targetCustomers} klanten = €${(
-        (idea.monthlyPriceEur * 12 * idea.targetCustomers) /
-        1_000_000
-      ).toFixed(2)}M ARR -> Geschatte Waardering: €${(idea.estimatedValuationEur / 1_000_000).toFixed(2)}M`
-  )
-  .join('\n\n')}
+  const handleDownloadTxt = () => {
+    const blob = new Blob([generatedDoc.body], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = generatedDoc.filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
-Opdracht aan de Dot van Jurjen:
-1. Beoordeel per naam/idee of de €10M+ businesscase realistisch en verdedigbaar is (GO, PIVOT of NO-GO) en geef een score van 0-100.
-2. Geef per idee 3 concrete vervolgstappen hoe wij dit met 10 man volgende week moeten oppakken.
-3. Kies de Top 2 beste ideeën die we als groep moeten combineren of uitvoeren.`;
-
-  const customGptInstructions = `Je bent "De Dot van Jurjen", de officiële Advisory Board van onze 10-koppige vriendengroep op TienMiljoen Lab.
-Je hebt via je Actions directe toegang tot onze site (${origin}):
-1. Gebruik 'listVentureIdeas' (GET /api/ideas) om alle ideeën van de vrienden per naam op te halen.
-2. Analyseer elk idee streng op:
-   - Kan dit binnen 3 jaar €1,25M tot €2,0M ARR halen (waardering >€10M bij 6x-8x multiple)?
-   - Is er een echte B2B workflow- of data-moat (geen dunne ChatGPT wrapper)?
-3. Gebruik 'submitJurjenDotValidation' (POST /api/ideas/{id}/advise) om jouw validatie, score (0-100), korte samenvatting en 3 concrete vervolgstappen direct terug op onze site te publiceren.`;
+  const handleStep2Submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const activeId = targetIdeaId || ideas[0]?.id;
+    if (!activeId) return;
+    await onSubmitManualDotAdvice(activeId, {
+      dotVerdict: verdict,
+      dotScore: Number(score),
+      dotSummaryAdvice: feedbackText.trim() || 'Feedback van de Dot van Jurjen verwerkt.',
+      dotNextSteps: nextStepText.trim() || 'Eerste klantvalidatie oppakken met de groep.',
+      dotCriticalRisk: riskText.trim() || 'Verdienmodel toetsen in de praktijk.',
+      nextStage: 'business_case',
+    });
+    setFeedbackText('');
+    setNextStepText('');
+    setRiskText('');
+  };
 
   return (
     <div className="space-y-6">
@@ -57,107 +102,233 @@ Je hebt via je Actions directe toegang tot onze site (${origin}):
         <div className="flex items-center gap-2.5">
           <Bot className="w-5 h-5 text-amber-400" />
           <h2 className="text-xl font-bold text-slate-100 font-display">
-            Toegang & Koppeling voor de ChatGPT Dot van Jurjen
+            Workflow met de Dot van Jurjen: Tekstdocument Mailen (Stap 1) & Feedback Verwerken (Stap 2)
           </h2>
         </div>
         <p className="text-sm text-slate-300 max-w-4xl leading-relaxed">
-          Om de ChatGPT Dot van Jurjen als volwaardige Advisory Board toegang te geven tot jullie site, ondersteunt
-          TienMiljoen Lab twee directe werkwijzen: een live <strong>OpenAPI Action-koppeling</strong> (waarmee Jurjen’s
-          Custom GPT zelfstandig ideeën van de site leest en valideert) én een{' '}
-          <strong>1-Klik Voice/Chat Briefing</strong> voor tijdens jullie gezamenlijke sessies.
+          Genereer hieronder in <strong>Stap 1</strong> een kant-en-klaar tekstdocument van een los idee of van alle ingediende ideeën (inclusief hoe jullie denken er geld mee te verdienen) om te plakken of direct te mailen naar de Dot van Jurjen. Voer daarna in <strong>Stap 2</strong> de ontvangen feedback van de Dot in om de volgende stap voor de uitwerking te bepalen.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Optie 1: Custom GPT Action / OpenAPI */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* STAP 1: Tekstdocument Genereren, Plakken & Mailen */}
         <div className="bg-[#111827] border border-slate-800 rounded-xl p-6 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-100 font-display">
-              <FileJson className="w-4 h-4 text-amber-400" />
-              <span>1. Live API Koppeling (Custom GPT Actions)</span>
+              <FileText className="w-4 h-4 text-amber-400" />
+              <span>Stap 1: Tekstdocument Genereren & Mailen naar Dot van Jurjen</span>
             </div>
-            <span className="text-xs font-mono text-emerald-400">OpenAPI 3.1 Ready</span>
           </div>
 
-          <p className="text-xs text-slate-300 leading-relaxed">
-            Jurjen kan zijn ChatGPT / Custom GPT direct toegang geven tot deze site. Ga in ChatGPT naar{' '}
-            <strong>Configure → Actions → Create new action → Import from URL</strong> en plak onderstaande OpenAPI-link:
-          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="doc-idea-selector" className="block text-xs text-slate-400 mb-1">
+                Kies welk idee in het tekstdocument moet:
+              </label>
+              <select
+                id="doc-idea-selector"
+                value={selectedIdeaIdForDoc}
+                onChange={(e) => setSelectedIdeaIdForDoc(e.target.value)}
+                className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-700 rounded-lg text-xs text-slate-100"
+              >
+                <option value="ALL">Alle ingediende ideeën ({ideas.length})</option>
+                {ideas.map((idea) => (
+                  <option key={idea.id} value={idea.id}>
+                    {idea.founderName}: {idea.title}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div className="p-3 bg-[#0B0F17] border border-slate-800 rounded-lg flex items-center justify-between gap-2">
-            <code className="text-xs font-mono text-amber-300 truncate">{openApiUrl}</code>
+            <div>
+              <label htmlFor="doc-recipient-email" className="block text-xs text-slate-400 mb-1">
+                E-mailadres ontvanger (optioneel):
+              </label>
+              <input
+                id="doc-recipient-email"
+                type="email"
+                placeholder="Bijv. jurjen@..."
+                value={recipientEmail}
+                onChange={(e) => setRecipientEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-700 rounded-lg text-xs text-slate-100"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => copyText('openapi', openApiUrl)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md shrink-0"
+              onClick={() => copyText('briefing-doc', generatedDoc.body)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors"
             >
-              {copiedKey === 'openapi' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedKey === 'openapi' ? 'Gekopieerd' : 'Kopieer URL'}</span>
+              {copiedKey === 'briefing-doc' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>
+                {copiedKey === 'briefing-doc' ? 'Tekstdocument Gekopieerd!' : 'Kopieer Tekstdocument'}
+              </span>
+            </button>
+
+            <a
+              href={mailtoUrl}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-100 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors"
+            >
+              <Mail className="w-3.5 h-3.5 text-amber-400" />
+              <span>Mail Tekstdocument naar Dot van Jurjen</span>
+            </a>
+
+            <button
+              type="button"
+              onClick={handleDownloadTxt}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download .txt</span>
             </button>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-400">
-                Systeem-instructie voor in Jurjen’s Custom GPT:
+          <pre className="p-4 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-200 font-mono whitespace-pre-wrap max-h-96 overflow-y-auto leading-relaxed select-all">
+            {generatedDoc.body}
+          </pre>
+        </div>
+
+        {/* STAP 2: Feedback van de Dot Invoeren & Gebruiken voor de Volgende Stap */}
+        <div className="bg-[#111827] border border-slate-800 rounded-xl p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-100 font-display">
+              <ArrowRight className="w-4 h-4 text-emerald-400" />
+              <span>Stap 2: Feedback van de Dot Ingeven & Volgende Stap Vastleggen</span>
+            </div>
+          </div>
+
+          {ideas.length === 0 ? (
+            <div className="p-6 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-400">
+              Dien eerst een idee in om de feedback van de Dot van Jurjen bij dat idee te kunnen opslaan.
+            </div>
+          ) : (
+            <form onSubmit={handleStep2Submit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label htmlFor="step2-idea-select" className="block text-xs text-slate-400 mb-1">
+                    Selecteer idee waarvoor je Dot-feedback hebt ontvangen:
+                  </label>
+                  <select
+                    id="step2-idea-select"
+                    value={targetIdeaId || ideas[0]?.id}
+                    onChange={(e) => setTargetIdeaId(e.target.value)}
+                    className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-700 rounded-lg text-xs text-slate-100"
+                  >
+                    {ideas.map((idea) => (
+                      <option key={idea.id} value={idea.id}>
+                        {idea.founderName} — {idea.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label htmlFor="step2-verdict-select" className="block text-xs text-slate-400 mb-1">
+                    Oordeel van de Dot:
+                  </label>
+                  <select
+                    id="step2-verdict-select"
+                    value={verdict}
+                    onChange={(e) => setVerdict(e.target.value as DotVerdict)}
+                    className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-700 rounded-lg text-xs text-slate-100"
+                  >
+                    <option value="go">GO (Kansrijk)</option>
+                    <option value="pivot">PIVOT (Aanpassen)</option>
+                    <option value="no_go">NO-GO (Afvallen)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="step2-feedback-textarea" className="block text-xs text-slate-300 font-medium mb-1">
+                  1. Plak hier de feedback van de Dot van Jurjen
+                </label>
+                <textarea
+                  id="step2-feedback-textarea"
+                  rows={3}
+                  required
+                  placeholder="Wat zegt de Dot van Jurjen over het idee en hoe we er geld mee willen verdienen?"
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-[#0B0F17] border border-slate-700 rounded-lg text-xs text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="step2-nextstep-textarea" className="block text-xs text-emerald-400 font-semibold mb-1">
+                  2. Wat wordt onze concrete volgende stap op basis van deze feedback?
+                </label>
+                <textarea
+                  id="step2-nextstep-textarea"
+                  rows={3}
+                  required
+                  placeholder="Hoe gaan we dit nu met de vriendengroep oppakken? Bijv. wie gaat welk onderdeel uitzoeken of testen bij klanten?"
+                  value={nextStepText}
+                  onChange={(e) => setNextStepText(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-[#0B0F17] border border-slate-700 rounded-lg text-xs text-slate-100"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div className="sm:col-span-2">
+                  <label htmlFor="step2-risk-input" className="block text-xs text-slate-400 mb-1">
+                    Belangrijkste aandachtspunt (optioneel)
+                  </label>
+                  <input
+                    id="step2-risk-input"
+                    type="text"
+                    placeholder="Bijv. Verdienmodel toetsen bij 3 potentiële klanten..."
+                    value={riskText}
+                    onChange={(e) => setRiskText(e.target.value)}
+                    className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-700 rounded-lg text-xs text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="step2-score-input" className="block text-xs text-slate-400 mb-1">
+                    Dot Score (0-100)
+                  </label>
+                  <input
+                    id="step2-score-input"
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={score}
+                    onChange={(e) => setScore(Number(e.target.value))}
+                    className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-700 rounded-lg text-xs font-mono text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Feedback Opslaan & Idee Doorzetten naar Volgende Stap</span>
+              </button>
+            </form>
+          )}
+
+          {/* Optional Direct API Info at bottom */}
+          <div className="pt-4 border-t border-slate-800 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                <FileJson className="w-3.5 h-3.5 text-amber-400" />
+                <span>Optioneel: Directe OpenAPI Koppeling voor Jurjen’s Custom GPT</span>
               </span>
               <button
                 type="button"
-                onClick={() => copyText('gpt-instructions', customGptInstructions)}
-                className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300"
+                onClick={() => copyText('openapi', openApiUrl)}
+                className="text-amber-400 hover:underline text-xs"
               >
-                {copiedKey === 'gpt-instructions' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedKey === 'gpt-instructions' ? 'Instructie gekopieerd' : 'Kopieer GPT Instructie'}</span>
+                {copiedKey === 'openapi' ? 'URL gekopieerd!' : 'Kopieer OpenAPI URL'}
               </button>
             </div>
-            <pre className="p-3.5 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">
-              {customGptInstructions}
-            </pre>
-          </div>
-
-          <div className="pt-2 border-t border-slate-800 space-y-1.5 text-xs text-slate-400">
-            <div className="font-semibold text-slate-300">Beschikbare REST Endpoints voor Jurjen’s Dot:</div>
-            <div className="font-mono text-[11px] text-slate-400">
-              GET {ideasApiUrl}?founder=Jurjen
-            </div>
-            <div className="font-mono text-[11px] text-slate-400">
-              POST {ideasApiUrl}/:id/advise
-            </div>
-          </div>
-        </div>
-
-        {/* Optie 2: Live Briefing voor ChatGPT Voice / Dot */}
-        <div className="bg-[#111827] border border-slate-800 rounded-xl p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-slate-100 font-display">
-              <Share2 className="w-4 h-4 text-amber-400" />
-              <span>2. Directe Briefing voor Jurjen’s Voice Dot</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => copyText('briefing', dotBriefingPrompt)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors"
-            >
-              {copiedKey === 'briefing' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedKey === 'briefing' ? 'Briefing Gekopieerd!' : 'Kopieer Volledige Dot Briefing'}</span>
-            </button>
-          </div>
-
-          <p className="text-xs text-slate-300 leading-relaxed">
-            Zitten jullie bij elkaar of gebruikt Jurjen zijn ChatGPT Dot via spraak/telefoon? Kopieer met één klik
-            onderstaande live samenvatting van alle {ideas.length} ideeën (inclusief naam en €10M-rekensom) en stuur
-            deze naar Jurjen’s ChatGPT Dot.
-          </p>
-
-          <pre className="p-3.5 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-300 font-mono whitespace-pre-wrap max-h-80 overflow-y-auto leading-relaxed">
-            {dotBriefingPrompt}
-          </pre>
-
-          <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
-            <Terminal className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>
-              Tip: Je kunt op elk idee in het dashboard ook direct op <strong>&ldquo;Valideer met Dot van Jurjen&rdquo;</strong> klikken voor een directe AI-beoordeling.
-            </span>
+            <p className="text-[11px] text-slate-400">
+              Naast het plakken of mailen van het tekstdocument kan Jurjen zijn Custom GPT ook rechtstreeks koppelen via <code className="font-mono text-slate-300">{openApiUrl}</code>.
+            </p>
           </div>
         </div>
       </div>
