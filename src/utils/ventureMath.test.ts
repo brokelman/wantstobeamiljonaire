@@ -141,3 +141,11 @@ test('filterIdeas filters accurately by friend name and search query', () => {
   assert.equal(searchTransport.length, 1);
   assert.equal(searchTransport[0].founderName, 'Daan');
 });
+
+test('netlify.toml disables smart secret scanning false positives for Firebase client config', async () => {
+  const fs = await import('node:fs');
+  const netlifyToml = fs.readFileSync(new URL('../../netlify.toml', import.meta.url), 'utf8');
+  assert.ok(netlifyToml.includes('SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"'));
+  assert.ok(netlifyToml.includes('SECRETS_SCAN_OMIT_PATHS'));
+});
+

@@ -31,6 +31,10 @@ import {
 import {
   filterIdeas,
   calculateAnnualRecurringRevenue,
+  calculateEnterpriseValuation,
+  buildShortSummary,
+  validateIdeaInput,
+  generateDeterministicDotAdvice,
   type VentureIdea,
   type IdeaFormInput,
   type VentureStage,
@@ -44,10 +48,35 @@ import { MethodologyView } from './components/MethodologyView';
 
 type ActiveTab = 'ideas' | 'dot_bridge' | 'methodology';
 
+const LOCAL_STORAGE_IDEAS_KEY = 'tienmiljoen_lab_ideas_v1';
+const LOCAL_STORAGE_FOUNDERS_KEY = 'tienmiljoen_lab_founders_v1';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('ideas');
-  const [ideas, setIdeas] = useState<VentureIdea[]>(SEED_IDEAS);
-  const [founders, setFounders] = useState<FounderMember[]>(INITIAL_FOUNDERS);
+  const [ideas, setIdeas] = useState<VentureIdea[]>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_IDEAS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return SEED_IDEAS;
+  });
+  const [founders, setFounders] = useState<FounderMember[]>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_FOUNDERS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return INITIAL_FOUNDERS;
+  });
   const [selectedIdeaId, setSelectedIdeaId] = useState<string>(SEED_IDEAS[0]?.id || '');
 
   // Filters
@@ -67,11 +96,29 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
 
-  // 1. Load shared ideas from Express backend (accessible by all 10 friends & Jurjen's ChatGPT Dot API)
+  // Persist to localStorage for static hosting resilience
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_IDEAS_KEY, JSON.stringify(ideas));
+    } catch {
+      // ignore
+    }
+  }, [ideas]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_FOUNDERS_KEY, JSON.stringify(founders));
+    } catch {
+      // ignore
+    }
+  }, [founders]);
+
+  // 1. Load shared ideas from Express backend if available
   const fetchBackendIdeas = async () => {
     try {
       const res = await fetch('/api/ideas');
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         if (Array.isArray(data.ideas) && data.ideas.length > 0) {
           setIdeas(data.ideas);
@@ -80,8 +127,8 @@ export default function App() {
           setFounders(data.founders);
         }
       }
-    } catch (err) {
-      console.warn('Using local seed ideas:', err);
+    } catch {
+      // Static host (e.g. Netlify) without Express backend — uses localStorage & Firestore
     }
   };
 
@@ -202,25 +249,67 @@ export default function App() {
   };
 
   const handleCreateIdea = async (input: IdeaFormInput) => {
-    const res = await fetch('/api/ideas', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...input,
-        authorUid: currentUser?.uid || 'local-founder',
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Kon idee niet opslaan.');
+    const check = validateIdeaInput(input);
+    if (!check.valid) {
+      throw new Error(check.errors.join(' '));
     }
-    const created: VentureIdea = data.idea;
-    setIdeas((prev) => [created, ...prev]);
+
+    let created: VentureIdea | null = null;
+    try {
+      const res = await fetch('/api/ideas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...input,
+          authorUid: currentUser?.uid || 'local-founder',
+        }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        created = data.idea;
+      }
+    } catch {
+      // Static fallback below
+    }
+
+    if (!created) {
+      const now = new Date().toISOString();
+      created = {
+        id: `idea-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        title: input.title.trim().slice(0, 120),
+        founderName: input.founderName.trim().slice(0, 60),
+        authorUid: currentUser?.uid || 'local-founder',
+        shortSummary: buildShortSummary(input),
+        problemStatement: input.problemStatement.trim().slice(0, 1500),
+        aiSolution: input.aiSolution.trim().slice(0, 1500),
+        targetMarket: input.targetMarket.trim().slice(0, 200),
+        stage: 'idea',
+        monthlyPriceEur: input.monthlyPriceEur,
+        targetCustomers: input.targetCustomers,
+        arrMultiple: input.arrMultiple,
+        estimatedValuationEur: calculateEnterpriseValuation(
+          input.monthlyPriceEur,
+          input.targetCustomers,
+          input.arrMultiple
+        ),
+        votesCount: 1,
+        dotVerdict: 'pending',
+        dotScore: 0,
+        dotSummaryAdvice: 'Wacht op validatie door de ChatGPT Dot van Jurjen.',
+        dotNextSteps: 'Klik op "Valideer met Dot van Jurjen" om direct een analyse en vervolgstappen te genereren.',
+        dotCriticalRisk: 'Nog niet geanalyseerd.',
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+
+    setIdeas((prev) => [created!, ...prev]);
     setSelectedIdeaId(created.id);
-    if (!founders.some((f) => f.name.toLowerCase() === created.founderName.toLowerCase())) {
+    if (!founders.some((f) => f.name.toLowerCase() === created!.founderName.toLowerCase())) {
       setFounders((prev) => [
         ...prev,
-        { name: created.founderName, role: 'Co-Founder', specialty: '€10M+ AI Venture Builder' },
+        { name: created!.founderName, role: 'Co-Founder', specialty: '€10M+ AI Venture Builder' },
       ]);
     }
     await syncIdeaToFirestoreIfSignedIn(created, true);
@@ -228,29 +317,59 @@ export default function App() {
   };
 
   const handleVote = async (ideaId: string) => {
-    const res = await fetch(`/api/ideas/${ideaId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ incrementVote: true }),
-    });
-    if (res.ok) {
-      const { idea } = await res.json();
-      setIdeas((prev) => prev.map((item) => (item.id === ideaId ? idea : item)));
-      showToast(`Stem geregistreerd op "${idea.title}"!`);
+    let updatedIdea: VentureIdea | null = null;
+    try {
+      const res = await fetch(`/api/ideas/${ideaId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ incrementVote: true }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        updatedIdea = data.idea;
+      }
+    } catch {
+      // Static fallback below
     }
+
+    setIdeas((prev) =>
+      prev.map((item) => {
+        if (item.id !== ideaId) return item;
+        const next = updatedIdea || { ...item, votesCount: item.votesCount + 1, updatedAt: new Date().toISOString() };
+        syncIdeaToFirestoreIfSignedIn(next, false);
+        showToast(`Stem geregistreerd op "${next.title}"!`);
+        return next;
+      })
+    );
   };
 
   const handleStageChange = async (ideaId: string, stage: VentureStage) => {
-    const res = await fetch(`/api/ideas/${ideaId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ stage }),
-    });
-    if (res.ok) {
-      const { idea } = await res.json();
-      setIdeas((prev) => prev.map((item) => (item.id === ideaId ? idea : item)));
-      showToast(`Fase bijgewerkt naar ${stage}.`);
+    let updatedIdea: VentureIdea | null = null;
+    try {
+      const res = await fetch(`/api/ideas/${ideaId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        updatedIdea = data.idea;
+      }
+    } catch {
+      // Static fallback below
     }
+
+    setIdeas((prev) =>
+      prev.map((item) => {
+        if (item.id !== ideaId) return item;
+        const next = updatedIdea || { ...item, stage, updatedAt: new Date().toISOString() };
+        syncIdeaToFirestoreIfSignedIn(next, false);
+        return next;
+      })
+    );
+    showToast(`Fase bijgewerkt naar ${stage}.`);
   };
 
   const handleUpdateEconomics = async (
@@ -259,31 +378,82 @@ export default function App() {
     targetCustomers: number,
     arrMultiple: number
   ) => {
-    const res = await fetch(`/api/ideas/${ideaId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ monthlyPriceEur, targetCustomers, arrMultiple }),
-    });
-    if (res.ok) {
-      const { idea } = await res.json();
-      setIdeas((prev) => prev.map((item) => (item.id === ideaId ? idea : item)));
-      showToast(
-        `Nieuwe €10M-rekensom opgeslagen: €${(idea.estimatedValuationEur / 1_000_000).toFixed(2)}M waardering.`
-      );
+    let updatedIdea: VentureIdea | null = null;
+    try {
+      const res = await fetch(`/api/ideas/${ideaId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ monthlyPriceEur, targetCustomers, arrMultiple }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        updatedIdea = data.idea;
+      }
+    } catch {
+      // Static fallback below
     }
+
+    const newVal = calculateEnterpriseValuation(monthlyPriceEur, targetCustomers, arrMultiple);
+    setIdeas((prev) =>
+      prev.map((item) => {
+        if (item.id !== ideaId) return item;
+        const next = updatedIdea || {
+          ...item,
+          monthlyPriceEur,
+          targetCustomers,
+          arrMultiple,
+          estimatedValuationEur: newVal,
+          updatedAt: new Date().toISOString(),
+        };
+        syncIdeaToFirestoreIfSignedIn(next, false);
+        return next;
+      })
+    );
+    showToast(`Nieuwe €10M-rekensom opgeslagen: €${(newVal / 1_000_000).toFixed(2)}M waardering.`);
   };
 
   const handleTriggerDotValidation = async (ideaId: string) => {
     setIsValidatingDot(true);
     try {
-      const res = await fetch(`/api/ideas/${ideaId}/validate-with-dot`, {
-        method: 'POST',
-      });
-      if (res.ok) {
-        const { idea } = await res.json();
-        setIdeas((prev) => prev.map((item) => (item.id === ideaId ? idea : item)));
-        showToast(`De Dot van Jurjen heeft "${idea.title}" gevalideerd (Score: ${idea.dotScore}/100)!`);
+      let updatedIdea: VentureIdea | null = null;
+      try {
+        const res = await fetch(`/api/ideas/${ideaId}/validate-with-dot`, {
+          method: 'POST',
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const data = await res.json();
+          updatedIdea = data.idea;
+        }
+      } catch {
+        // Static fallback below
       }
+
+      setIdeas((prev) =>
+        prev.map((item) => {
+          if (item.id !== ideaId) return item;
+          if (updatedIdea) {
+            syncIdeaToFirestoreIfSignedIn(updatedIdea, false);
+            showToast(`De Dot van Jurjen heeft "${updatedIdea.title}" gevalideerd (Score: ${updatedIdea.dotScore}/100)!`);
+            return updatedIdea;
+          }
+          const fallback = generateDeterministicDotAdvice(item);
+          const next: VentureIdea = {
+            ...item,
+            dotVerdict: fallback.dotVerdict,
+            dotScore: fallback.dotScore,
+            dotSummaryAdvice: fallback.dotSummaryAdvice,
+            dotNextSteps: fallback.dotNextSteps,
+            dotCriticalRisk: fallback.dotCriticalRisk,
+            stage: fallback.recommendedStage,
+            updatedAt: new Date().toISOString(),
+          };
+          syncIdeaToFirestoreIfSignedIn(next, false);
+          showToast(`De Dot van Jurjen heeft "${next.title}" gevalideerd (Score: ${next.dotScore}/100)!`);
+          return next;
+        })
+      );
     } finally {
       setIsValidatingDot(false);
     }
@@ -299,34 +469,74 @@ export default function App() {
       dotCriticalRisk: string;
     }
   ) => {
-    const res = await fetch(`/api/ideas/${ideaId}/advise`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      const { idea } = await res.json();
-      setIdeas((prev) => prev.map((item) => (item.id === ideaId ? idea : item)));
-      showToast(`Advies van de Dot van Jurjen opgeslagen bij "${idea.title}".`);
+    let updatedIdea: VentureIdea | null = null;
+    try {
+      const res = await fetch(`/api/ideas/${ideaId}/advise`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        updatedIdea = data.idea;
+      }
+    } catch {
+      // Static fallback below
     }
+
+    setIdeas((prev) =>
+      prev.map((item) => {
+        if (item.id !== ideaId) return item;
+        const next: VentureIdea = updatedIdea || {
+          ...item,
+          dotVerdict: payload.dotVerdict,
+          dotScore: payload.dotScore,
+          dotSummaryAdvice: payload.dotSummaryAdvice,
+          dotNextSteps: payload.dotNextSteps,
+          dotCriticalRisk: payload.dotCriticalRisk,
+          stage: item.stage === 'idea' ? (payload.dotVerdict === 'go' ? 'business_case' : 'validated') : item.stage,
+          updatedAt: new Date().toISOString(),
+        };
+        syncIdeaToFirestoreIfSignedIn(next, false);
+        showToast(`Advies van de Dot van Jurjen opgeslagen bij "${next.title}".`);
+        return next;
+      })
+    );
   };
 
   const handleAddFounder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFriendInput.trim() || newFriendInput.trim().length < 2) return;
-    const res = await fetch('/api/founders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newFriendInput.trim() }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setFounders(data.founders);
-      setSelectedFounder(newFriendInput.trim());
-      setNewFriendInput('');
-      setShowAddFriend(false);
-      showToast(`${newFriendInput.trim()} toegevoegd aan de vriendengroep!`);
+    const cleanName = newFriendInput.trim();
+    if (!cleanName || cleanName.length < 2) return;
+    try {
+      const res = await fetch('/api/founders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: cleanName }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        setFounders(data.founders);
+      } else if (!founders.some((f) => f.name.toLowerCase() === cleanName.toLowerCase())) {
+        setFounders((prev) => [
+          ...prev,
+          { name: cleanName, role: 'Co-Founder', specialty: 'Venture Ideation & Uitwerking' },
+        ]);
+      }
+    } catch {
+      if (!founders.some((f) => f.name.toLowerCase() === cleanName.toLowerCase())) {
+        setFounders((prev) => [
+          ...prev,
+          { name: cleanName, role: 'Co-Founder', specialty: 'Venture Ideation & Uitwerking' },
+        ]);
+      }
     }
+    setSelectedFounder(cleanName);
+    setNewFriendInput('');
+    setShowAddFriend(false);
+    showToast(`${cleanName} toegevoegd aan de vriendengroep!`);
   };
 
   // Summary metrics across all ideas
