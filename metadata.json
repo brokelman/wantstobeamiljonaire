@@ -1,0 +1,6 @@
+{
+  "name": "TienMiljoen Lab — €10M+ AI Venture Studio",
+  "description": "Samenwerkingsplatform voor 10 vrienden om €10M+ AI-businesscases te bouwen, per naam te filteren en live te laten valideren door de ChatGPT Dot van Jurjen als Advisory Board.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,112 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isEmailVerified() && (
+        request.auth.token.email == 'brokelman@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidIdea(data) {
+      return data.keys().hasAll([
+        'title', 'founderName', 'authorUid', 'shortSummary', 'problemStatement',
+        'aiSolution', 'targetMarket', 'stage', 'monthlyPriceEur', 'targetCustomers',
+        'arrMultiple', 'estimatedValuationEur', 'votesCount', 'dotVerdict',
+        'dotScore', 'dotSummaryAdvice', 'dotNextSteps', 'dotCriticalRisk',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'title', 'founderName', 'authorUid', 'shortSummary', 'problemStatement',
+        'aiSolution', 'targetMarket', 'stage', 'monthlyPriceEur', 'targetCustomers',
+        'arrMultiple', 'estimatedValuationEur', 'votesCount', 'dotVerdict',
+        'dotScore', 'dotSummaryAdvice', 'dotNextSteps', 'dotCriticalRisk',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.title is string && data.title.size() >= 3 && data.title.size() <= 120 &&
+      data.founderName is string && data.founderName.size() >= 2 && data.founderName.size() <= 60 &&
+      data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 && data.authorUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.shortSummary is string && data.shortSummary.size() >= 10 && data.shortSummary.size() <= 600 &&
+      data.problemStatement is string && data.problemStatement.size() >= 10 && data.problemStatement.size() <= 1500 &&
+      data.aiSolution is string && data.aiSolution.size() >= 10 && data.aiSolution.size() <= 1500 &&
+      data.targetMarket is string && data.targetMarket.size() >= 2 && data.targetMarket.size() <= 200 &&
+      data.stage is string && data.stage.size() <= 30 && (data.stage == 'idea' || data.stage == 'validated' || data.stage == 'business_case' || data.stage == 'execution') &&
+      data.monthlyPriceEur is number && data.monthlyPriceEur >= 0 && data.monthlyPriceEur <= 10000000 &&
+      data.targetCustomers is number && data.targetCustomers >= 0 && data.targetCustomers <= 100000000 &&
+      data.arrMultiple is number && data.arrMultiple >= 1 && data.arrMultiple <= 50 &&
+      data.estimatedValuationEur is number && data.estimatedValuationEur >= 0 &&
+      data.votesCount is number && data.votesCount >= 0 && data.votesCount <= 10000 &&
+      data.dotVerdict is string && data.dotVerdict.size() <= 20 && (data.dotVerdict == 'pending' || data.dotVerdict == 'go' || data.dotVerdict == 'pivot' || data.dotVerdict == 'no_go') &&
+      data.dotScore is number && data.dotScore >= 0 && data.dotScore <= 100 &&
+      data.dotSummaryAdvice is string && data.dotSummaryAdvice.size() <= 2000 &&
+      data.dotNextSteps is string && data.dotNextSteps.size() <= 2000 &&
+      data.dotCriticalRisk is string && data.dotCriticalRisk.size() <= 1000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    match /ideas/{ideaId} {
+      allow get: if isEmailVerified() && isValidId(ideaId);
+      allow list: if isEmailVerified() && (
+        existing().stage == 'idea' ||
+        existing().stage == 'validated' ||
+        existing().stage == 'business_case' ||
+        existing().stage == 'execution'
+      );
+      allow create: if isEmailVerified() &&
+        isValidId(ideaId) &&
+        isValidIdea(incoming()) &&
+        incoming().authorUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isEmailVerified() &&
+        isValidId(ideaId) &&
+        isValidIdea(incoming()) &&
+        incoming().authorUid == existing().authorUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          // Action 1: Owner edits idea details or stage
+          (existing().authorUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'founderName', 'shortSummary', 'problemStatement',
+              'aiSolution', 'targetMarket', 'stage', 'monthlyPriceEur',
+              'targetCustomers', 'arrMultiple', 'estimatedValuationEur', 'updatedAt'
+            ])
+          ) ||
+          // Action 2: Any verified founder in the group votes or updates Jurjen's Dot validation
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'votesCount', 'stage', 'dotVerdict', 'dotScore',
+            'dotSummaryAdvice', 'dotNextSteps', 'dotCriticalRisk', 'updatedAt'
+          ])
+        );
+      allow delete: if isEmailVerified() &&
+        isValidId(ideaId) &&
+        (existing().authorUid == request.auth.uid || isAdmin());
+    }
+  }
+}

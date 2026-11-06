@@ -1,0 +1,143 @@
+{
+  "entities": {
+    "Idea": {
+      "title": "Idea",
+      "description": "An AI business case idea submitted by one of the 10 founders targeting a >10M EUR valuation.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Name of the AI venture idea",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "founderName": {
+          "type": "string",
+          "description": "Name of the friend who submitted the idea",
+          "minLength": 2,
+          "maxLength": 60
+        },
+        "authorUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the creator",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "shortSummary": {
+          "type": "string",
+          "description": "Concise executive summary of the idea",
+          "minLength": 10,
+          "maxLength": 600
+        },
+        "problemStatement": {
+          "type": "string",
+          "description": "The expensive problem solved in the target niche",
+          "minLength": 10,
+          "maxLength": 1500
+        },
+        "aiSolution": {
+          "type": "string",
+          "description": "How AI agents or models solve this problem 10x better",
+          "minLength": 10,
+          "maxLength": 1500
+        },
+        "targetMarket": {
+          "type": "string",
+          "description": "Specific B2B or B2C customer segment",
+          "minLength": 2,
+          "maxLength": 200
+        },
+        "stage": {
+          "type": "string",
+          "description": "Current stage in the 10M Venture Funnel",
+          "enum": ["idea", "validated", "business_case", "execution"]
+        },
+        "monthlyPriceEur": {
+          "type": "number",
+          "description": "Estimated monthly subscription price in EUR"
+        },
+        "targetCustomers": {
+          "type": "number",
+          "description": "Target customer count within 36 months"
+        },
+        "arrMultiple": {
+          "type": "number",
+          "description": "SaaS valuation multiple (typically 6 to 10)"
+        },
+        "estimatedValuationEur": {
+          "type": "number",
+          "description": "Calculated enterprise valuation in EUR"
+        },
+        "votesCount": {
+          "type": "number",
+          "description": "Number of founder votes from the 10 friends"
+        },
+        "dotVerdict": {
+          "type": "string",
+          "description": "Validation verdict from Jurjen's ChatGPT Dot",
+          "enum": ["pending", "go", "pivot", "no_go"]
+        },
+        "dotScore": {
+          "type": "number",
+          "description": "Viability score (0-100) assigned by Jurjen's Dot"
+        },
+        "dotSummaryAdvice": {
+          "type": "string",
+          "description": "Executive validation summary from Jurjen's Dot",
+          "maxLength": 2000
+        },
+        "dotNextSteps": {
+          "type": "string",
+          "description": "Concrete next steps recommended by Jurjen's Dot",
+          "maxLength": 2000
+        },
+        "dotCriticalRisk": {
+          "type": "string",
+          "description": "Primary bottleneck or moat risk identified by Jurjen's Dot",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": [
+        "title",
+        "founderName",
+        "authorUid",
+        "shortSummary",
+        "problemStatement",
+        "aiSolution",
+        "targetMarket",
+        "stage",
+        "monthlyPriceEur",
+        "targetCustomers",
+        "arrMultiple",
+        "estimatedValuationEur",
+        "votesCount",
+        "dotVerdict",
+        "dotScore",
+        "dotSummaryAdvice",
+        "dotNextSteps",
+        "dotCriticalRisk",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/ideas/{ideaId}": {
+      "schema": {
+        "$ref": "#/entities/Idea"
+      },
+      "description": "Collection of €10M+ AI venture ideas shared by the founders."
+    }
+  }
+}
