@@ -23,7 +23,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DATA_DIR = path.join(__dirname, 'data');
-const STORE_PATH = path.join(DATA_DIR, 'ideas-store.json');
+const STORE_PATH = path.join(DATA_DIR, 'ideas-store-v2.json');
 
 interface StoreState {
   founders: FounderMember[];
@@ -38,7 +38,7 @@ function loadStore(): StoreState {
     if (fs.existsSync(STORE_PATH)) {
       const raw = fs.readFileSync(STORE_PATH, 'utf8');
       const parsed = JSON.parse(raw) as StoreState;
-      if (Array.isArray(parsed.ideas) && parsed.ideas.length > 0) {
+      if (Array.isArray(parsed.founders) && Array.isArray(parsed.ideas)) {
         return parsed;
       }
     }
@@ -114,7 +114,7 @@ async function startServer() {
     });
   });
 
-  // 2. Add a new founder to the 10-friends roster
+  // 2. Add a new founder to the friends roster
   app.post('/api/founders', (req, res) => {
     const { name, role, specialty } = req.body ?? {};
     if (!name || typeof name !== 'string' || name.trim().length < 2) {
@@ -134,6 +134,46 @@ async function startServer() {
       });
       saveStore(store);
     }
+    res.json({ founders: store.founders });
+  });
+
+  // 2b. Edit a founder
+  app.patch('/api/founders/:name', (req, res) => {
+    const store = loadStore();
+    const targetName = decodeURIComponent(req.params.name).trim();
+    const idx = store.founders.findIndex((f) => f.name.toLowerCase() === targetName.toLowerCase());
+    if (idx === -1) {
+      res.status(404).json({ error: 'Vriend niet gevonden.' });
+      return;
+    }
+    const { name, role, specialty } = req.body ?? {};
+    const oldName = store.founders[idx].name;
+    const newName = typeof name === 'string' && name.trim().length >= 2 ? name.trim().slice(0, 40) : oldName;
+    store.founders[idx] = {
+      name: newName,
+      role: typeof role === 'string' && role.trim() ? role.trim().slice(0, 60) : store.founders[idx].role,
+      specialty:
+        typeof specialty === 'string' && specialty.trim()
+          ? specialty.trim().slice(0, 100)
+          : store.founders[idx].specialty,
+    };
+    if (newName !== oldName) {
+      store.ideas.forEach((idea) => {
+        if (idea.founderName.toLowerCase() === oldName.toLowerCase()) {
+          idea.founderName = newName;
+        }
+      });
+    }
+    saveStore(store);
+    res.json({ founders: store.founders, ideas: store.ideas });
+  });
+
+  // 2c. Delete a founder
+  app.delete('/api/founders/:name', (req, res) => {
+    const store = loadStore();
+    const targetName = decodeURIComponent(req.params.name).trim();
+    store.founders = store.founders.filter((f) => f.name.toLowerCase() !== targetName.toLowerCase());
+    saveStore(store);
     res.json({ founders: store.founders });
   });
 
@@ -203,7 +243,7 @@ async function startServer() {
     res.status(201).json({ idea: newIdea });
   });
 
-  // 4. Vote on an idea or update its stage / unit economics
+  // 4. Vote on an idea or update its stage / unit economics / full content
   app.patch('/api/ideas/:id', (req, res) => {
     const store = loadStore();
     const idea = store.ideas.find((i) => i.id === req.params.id);
@@ -213,6 +253,24 @@ async function startServer() {
     }
 
     const body = req.body ?? {};
+    if (typeof body.title === 'string' && body.title.trim().length >= 3) {
+      idea.title = body.title.trim().slice(0, 120);
+    }
+    if (typeof body.founderName === 'string' && body.founderName.trim().length >= 2) {
+      idea.founderName = body.founderName.trim().slice(0, 60);
+    }
+    if (typeof body.shortSummary === 'string' && body.shortSummary.trim().length >= 10) {
+      idea.shortSummary = body.shortSummary.trim().slice(0, 600);
+    }
+    if (typeof body.problemStatement === 'string' && body.problemStatement.trim().length >= 10) {
+      idea.problemStatement = body.problemStatement.trim().slice(0, 1500);
+    }
+    if (typeof body.aiSolution === 'string' && body.aiSolution.trim().length >= 10) {
+      idea.aiSolution = body.aiSolution.trim().slice(0, 1500);
+    }
+    if (typeof body.targetMarket === 'string' && body.targetMarket.trim().length >= 2) {
+      idea.targetMarket = body.targetMarket.trim().slice(0, 200);
+    }
     if (typeof body.stage === 'string' && ['idea', 'validated', 'business_case', 'execution'].includes(body.stage)) {
       idea.stage = body.stage as VentureStage;
     }
@@ -237,6 +295,14 @@ async function startServer() {
     idea.updatedAt = new Date().toISOString();
     saveStore(store);
     res.json({ idea });
+  });
+
+  // 4b. Delete an idea
+  app.delete('/api/ideas/:id', (req, res) => {
+    const store = loadStore();
+    store.ideas = store.ideas.filter((i) => i.id !== req.params.id);
+    saveStore(store);
+    res.json({ ideas: store.ideas });
   });
 
   // 5. Direct Webhook Endpoint for Jurjen's ChatGPT Dot (Custom GPT Action or Manual Paste)

@@ -10,12 +10,15 @@ import {
   UserPlus,
   Sparkles,
   Cloud,
+  Settings,
+  Trash2,
 } from 'lucide-react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
   doc,
   setDoc,
+  deleteDoc,
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
@@ -45,11 +48,12 @@ import { NewIdeaModal } from './components/NewIdeaModal';
 import { IdeaDetailPanel } from './components/IdeaDetailPanel';
 import { JurjenDotBridgeView } from './components/JurjenDotBridgeView';
 import { MethodologyView } from './components/MethodologyView';
+import { ManagePageView } from './components/ManagePageView';
 
-type ActiveTab = 'ideas' | 'dot_bridge' | 'methodology';
+type ActiveTab = 'ideas' | 'manage' | 'dot_bridge' | 'methodology';
 
-const LOCAL_STORAGE_IDEAS_KEY = 'tienmiljoen_lab_ideas_v1';
-const LOCAL_STORAGE_FOUNDERS_KEY = 'tienmiljoen_lab_founders_v1';
+const LOCAL_STORAGE_IDEAS_KEY = 'tienmiljoen_lab_ideas_v2';
+const LOCAL_STORAGE_FOUNDERS_KEY = 'tienmiljoen_lab_founders_v2';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('ideas');
@@ -58,7 +62,7 @@ export default function App() {
       const saved = localStorage.getItem(LOCAL_STORAGE_IDEAS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {
       // ignore storage errors
@@ -77,7 +81,7 @@ export default function App() {
     }
     return INITIAL_FOUNDERS;
   });
-  const [selectedIdeaId, setSelectedIdeaId] = useState<string>(SEED_IDEAS[0]?.id || '');
+  const [selectedIdeaId, setSelectedIdeaId] = useState<string>('');
 
   // Filters
   const [selectedFounder, setSelectedFounder] = useState<string>('ALL');
@@ -113,14 +117,14 @@ export default function App() {
     }
   }, [founders]);
 
-  // 1. Load shared ideas from Express backend if available
+  // 1. Load shared ideas and founders from Express backend if available
   const fetchBackendIdeas = async () => {
     try {
       const res = await fetch('/api/ideas');
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        if (Array.isArray(data.ideas) && data.ideas.length > 0) {
+        if (Array.isArray(data.ideas)) {
           setIdeas(data.ideas);
         }
         if (Array.isArray(data.founders) && data.founders.length > 0) {
@@ -243,6 +247,17 @@ export default function App() {
     }
   };
 
+  const deleteIdeaFromFirestoreIfSignedIn = async (ideaId: string) => {
+    if (!currentUser || !currentUser.emailVerified) return;
+    const cleanId = ideaId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 120);
+    const path = `ideas/${cleanId}`;
+    try {
+      await deleteDoc(doc(db, 'ideas', cleanId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
+  };
+
   const showToast = (msg: string) => {
     setStatusMessage(msg);
     setTimeout(() => setStatusMessage(null), 3500);
@@ -316,6 +331,52 @@ export default function App() {
     showToast(`Idee "${created.title}" van ${created.founderName} toegevoegd!`);
   };
 
+  const handleUpdateIdea = async (ideaId: string, updatedFields: Partial<VentureIdea>) => {
+    let updatedIdea: VentureIdea | null = null;
+    try {
+      const res = await fetch(`/api/ideas/${ideaId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedFields),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        updatedIdea = data.idea;
+      }
+    } catch {
+      // Static fallback below
+    }
+
+    setIdeas((prev) =>
+      prev.map((item) => {
+        if (item.id !== ideaId) return item;
+        const next: VentureIdea = updatedIdea || {
+          ...item,
+          ...updatedFields,
+          updatedAt: new Date().toISOString(),
+        };
+        syncIdeaToFirestoreIfSignedIn(next, false);
+        showToast(`Idee "${next.title}" bijgewerkt!`);
+        return next;
+      })
+    );
+  };
+
+  const handleDeleteIdea = async (ideaId: string) => {
+    const target = ideas.find((i) => i.id === ideaId);
+    try {
+      await fetch(`/api/ideas/${ideaId}`, {
+        method: 'DELETE',
+      });
+    } catch {
+      // Static fallback
+    }
+    setIdeas((prev) => prev.filter((i) => i.id !== ideaId));
+    await deleteIdeaFromFirestoreIfSignedIn(ideaId);
+    showToast(`Idee ${target ? `"${target.title}"` : ''} verwijderd.`);
+  };
+
   const handleVote = async (ideaId: string) => {
     let updatedIdea: VentureIdea | null = null;
     try {
@@ -345,31 +406,7 @@ export default function App() {
   };
 
   const handleStageChange = async (ideaId: string, stage: VentureStage) => {
-    let updatedIdea: VentureIdea | null = null;
-    try {
-      const res = await fetch(`/api/ideas/${ideaId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage }),
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        updatedIdea = data.idea;
-      }
-    } catch {
-      // Static fallback below
-    }
-
-    setIdeas((prev) =>
-      prev.map((item) => {
-        if (item.id !== ideaId) return item;
-        const next = updatedIdea || { ...item, stage, updatedAt: new Date().toISOString() };
-        syncIdeaToFirestoreIfSignedIn(next, false);
-        return next;
-      })
-    );
-    showToast(`Fase bijgewerkt naar ${stage}.`);
+    await handleUpdateIdea(ideaId, { stage });
   };
 
   const handleUpdateEconomics = async (
@@ -378,39 +415,13 @@ export default function App() {
     targetCustomers: number,
     arrMultiple: number
   ) => {
-    let updatedIdea: VentureIdea | null = null;
-    try {
-      const res = await fetch(`/api/ideas/${ideaId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ monthlyPriceEur, targetCustomers, arrMultiple }),
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        updatedIdea = data.idea;
-      }
-    } catch {
-      // Static fallback below
-    }
-
     const newVal = calculateEnterpriseValuation(monthlyPriceEur, targetCustomers, arrMultiple);
-    setIdeas((prev) =>
-      prev.map((item) => {
-        if (item.id !== ideaId) return item;
-        const next = updatedIdea || {
-          ...item,
-          monthlyPriceEur,
-          targetCustomers,
-          arrMultiple,
-          estimatedValuationEur: newVal,
-          updatedAt: new Date().toISOString(),
-        };
-        syncIdeaToFirestoreIfSignedIn(next, false);
-        return next;
-      })
-    );
-    showToast(`Nieuwe €10M-rekensom opgeslagen: €${(newVal / 1_000_000).toFixed(2)}M waardering.`);
+    await handleUpdateIdea(ideaId, {
+      monthlyPriceEur,
+      targetCustomers,
+      arrMultiple,
+      estimatedValuationEur: newVal,
+    });
   };
 
   const handleTriggerDotValidation = async (ideaId: string) => {
@@ -505,38 +516,100 @@ export default function App() {
     );
   };
 
-  const handleAddFounder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanName = newFriendInput.trim();
-    if (!cleanName || cleanName.length < 2) return;
+  const handleAddFounderObject = async (founder: FounderMember) => {
     try {
       const res = await fetch('/api/founders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: cleanName }),
+        body: JSON.stringify(founder),
       });
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         setFounders(data.founders);
-      } else if (!founders.some((f) => f.name.toLowerCase() === cleanName.toLowerCase())) {
-        setFounders((prev) => [
-          ...prev,
-          { name: cleanName, role: 'Co-Founder', specialty: 'Venture Ideation & Uitwerking' },
-        ]);
+      } else if (!founders.some((f) => f.name.toLowerCase() === founder.name.toLowerCase())) {
+        setFounders((prev) => [...prev, founder]);
       }
     } catch {
-      if (!founders.some((f) => f.name.toLowerCase() === cleanName.toLowerCase())) {
-        setFounders((prev) => [
-          ...prev,
-          { name: cleanName, role: 'Co-Founder', specialty: 'Venture Ideation & Uitwerking' },
-        ]);
+      if (!founders.some((f) => f.name.toLowerCase() === founder.name.toLowerCase())) {
+        setFounders((prev) => [...prev, founder]);
       }
     }
+    showToast(`${founder.name} toegevoegd aan de vriendengroep!`);
+  };
+
+  const handleUpdateFounder = async (originalName: string, updated: FounderMember) => {
+    try {
+      const res = await fetch(`/api/founders/${encodeURIComponent(originalName)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data.founders)) setFounders(data.founders);
+        if (Array.isArray(data.ideas)) setIdeas(data.ideas);
+        showToast(`Gegevens van ${updated.name} bijgewerkt!`);
+        return;
+      }
+    } catch {
+      // Static fallback below
+    }
+    setFounders((prev) =>
+      prev.map((f) => (f.name.toLowerCase() === originalName.toLowerCase() ? updated : f))
+    );
+    if (originalName !== updated.name) {
+      setIdeas((prev) =>
+        prev.map((i) =>
+          i.founderName.toLowerCase() === originalName.toLowerCase()
+            ? { ...i, founderName: updated.name }
+            : i
+        )
+      );
+    }
+    showToast(`Gegevens van ${updated.name} bijgewerkt!`);
+  };
+
+  const handleDeleteFounder = async (name: string) => {
+    try {
+      const res = await fetch(`/api/founders/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data.founders)) {
+          setFounders(data.founders);
+          if (selectedFounder.toLowerCase() === name.toLowerCase()) {
+            setSelectedFounder('ALL');
+          }
+          showToast(`${name} verwijderd uit de vriendenlijst.`);
+          return;
+        }
+      }
+    } catch {
+      // Static fallback below
+    }
+    setFounders((prev) => prev.filter((f) => f.name.toLowerCase() !== name.toLowerCase()));
+    if (selectedFounder.toLowerCase() === name.toLowerCase()) {
+      setSelectedFounder('ALL');
+    }
+    showToast(`${name} verwijderd uit de vriendenlijst.`);
+  };
+
+  const handleAddFounderQuick = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = newFriendInput.trim();
+    if (!cleanName || cleanName.length < 2) return;
+    await handleAddFounderObject({
+      name: cleanName,
+      role: 'Co-Founder',
+      specialty: 'Venture Ideation & Uitwerking',
+    });
     setSelectedFounder(cleanName);
     setNewFriendInput('');
     setShowAddFriend(false);
-    showToast(`${cleanName} toegevoegd aan de vriendengroep!`);
   };
 
   // Summary metrics across all ideas
@@ -588,6 +661,17 @@ export default function App() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('manage')}
+            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+              activeTab === 'manage'
+                ? 'text-slate-100 border-amber-400'
+                : 'border-transparent hover:text-slate-200'
+            }`}
+          >
+            Beheer & Edit
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('dot_bridge')}
             className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
               activeTab === 'dot_bridge'
@@ -633,6 +717,15 @@ export default function App() {
           }`}
         >
           Ideeën per Naam
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('manage')}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 ${
+            activeTab === 'manage' ? 'bg-amber-400 text-slate-950 font-semibold' : 'text-slate-300'
+          }`}
+        >
+          Beheer & Edit
         </button>
         <button
           type="button"
@@ -732,13 +825,26 @@ export default function App() {
           </div>
         </section>
 
+        {activeTab === 'manage' && (
+          <ManagePageView
+            founders={founders}
+            ideas={ideas}
+            onAddFounder={handleAddFounderObject}
+            onUpdateFounder={handleUpdateFounder}
+            onDeleteFounder={handleDeleteFounder}
+            onOpenNewIdeaModal={() => setIsNewIdeaOpen(true)}
+            onUpdateIdea={handleUpdateIdea}
+            onDeleteIdea={handleDeleteIdea}
+          />
+        )}
+
         {activeTab === 'dot_bridge' && <JurjenDotBridgeView ideas={ideas} />}
 
         {activeTab === 'methodology' && <MethodologyView founders={founders} />}
 
         {activeTab === 'ideas' && (
           <div className="space-y-6">
-            {/* Filter Bar per Naam van de 10 Vrienden */}
+            {/* Filter Bar per Naam van de Vrienden */}
             <section
               aria-label="Filter ideeën op naam van vriend"
               className="bg-[#111827] border border-slate-800 rounded-xl p-4 space-y-4"
@@ -746,25 +852,35 @@ export default function App() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-bold text-slate-100 font-display">
-                    Filter Ideeën per Naam (Jullie 10-Koppige Vriendengroep)
+                    Filter Ideeën per Naam ({founders.length} Vrienden)
                   </h2>
                   <p className="text-xs text-slate-400">
                     Klik op een naam om direct alle ingediende AI-businesscases, samenvattingen en adviezen van Jurjen’s Dot voor die persoon te bekijken.
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowAddFriend(!showAddFriend)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
-                >
-                  <UserPlus className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Vriend Toevoegen</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddFriend(!showAddFriend)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <UserPlus className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Snel Vriend Toevoegen</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('manage')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-300 hover:text-amber-200 border border-amber-500/40 rounded-lg hover:bg-amber-500/10 transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Beheer Vrienden & Ideeën</span>
+                  </button>
+                </div>
               </div>
 
               {showAddFriend && (
-                <form onSubmit={handleAddFounder} className="flex items-center gap-2 pt-1 max-w-md">
+                <form onSubmit={handleAddFounderQuick} className="flex items-center gap-2 pt-1 max-w-md">
                   <input
                     type="text"
                     placeholder="Voornaam van vriend..."
@@ -862,47 +978,62 @@ export default function App() {
               </div>
             </section>
 
-            {/* Main 2-Column Workspace: Left = Ideas per Name List, Right = Selected Idea + Dot Advice + Calculator */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Left Column: High-Density Idea Cards per Name */}
-              <div className="lg:col-span-5 space-y-3">
-                <div className="flex items-center justify-between px-1">
-                  <span className="text-xs font-semibold text-slate-400">
-                    {selectedFounder === 'ALL'
-                      ? `Overzicht van alle ${filteredIdeas.length} ideeën`
-                      : `Ideeën van ${selectedFounder} (${filteredIdeas.length})`}
-                  </span>
-                  {selectedFounder !== 'ALL' && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedFounder('ALL')}
-                      className="text-xs text-amber-400 hover:underline"
-                    >
-                      Toon alle vrienden
-                    </button>
-                  )}
+            {/* Empty State when there are 0 ideas */}
+            {filteredIdeas.length === 0 ? (
+              <div className="bg-[#111827] border border-slate-800 rounded-xl p-10 text-center space-y-4">
+                <h3 className="text-lg font-bold text-slate-100 font-display">
+                  {ideas.length === 0
+                    ? 'Klaar voor de aftrap: nog 0 ideeën ingediend'
+                    : `Nog geen ideeën gevonden voor ${selectedFounder === 'ALL' ? 'dit filter' : selectedFounder}`}
+                </h3>
+                <p className="text-sm text-slate-400 max-w-xl mx-auto leading-relaxed">
+                  Selecteer een naam ({founders.map((f) => f.name).join(', ')}) en dien het eerste &gt;€10M AI-idee in. De ChatGPT Dot van Jurjen staat klaar om elk idee te voorzien van een samenvatting, validatiescore en concrete vervolgstappen.
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsNewIdeaOpen(true)}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>
+                      {selectedFounder === 'ALL'
+                        ? 'Eerste €10M+ Idee Indienen'
+                        : `Idee Indienen voor ${selectedFounder}`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('manage')}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-slate-200 border border-slate-700 hover:bg-slate-800 rounded-lg transition-colors"
+                  >
+                    <Settings className="w-4 h-4 text-amber-400" />
+                    <span>Open Beheer & Edit Pagina</span>
+                  </button>
                 </div>
-
-                {filteredIdeas.length === 0 ? (
-                  <div className="bg-[#111827] border border-slate-800 rounded-xl p-8 text-center space-y-3">
-                    <p className="text-sm font-medium text-slate-200">
-                      Nog geen ideeën gevonden voor dit filter ({selectedFounder}).
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      Dien direct het eerste &gt;€10M AI-idee in op naam van{' '}
-                      {selectedFounder === 'ALL' ? 'een van de vrienden' : selectedFounder} en laat de Dot van Jurjen het valideren.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setIsNewIdeaOpen(true)}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Idee Indienen voor {selectedFounder === 'ALL' ? 'Groep' : selectedFounder}</span>
-                    </button>
+              </div>
+            ) : (
+              /* Main 2-Column Workspace when ideas exist */
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                <div className="lg:col-span-5 space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-xs font-semibold text-slate-400">
+                      {selectedFounder === 'ALL'
+                        ? `Overzicht van alle ${filteredIdeas.length} ideeën`
+                        : `Ideeën van ${selectedFounder} (${filteredIdeas.length})`}
+                    </span>
+                    {selectedFounder !== 'ALL' && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFounder('ALL')}
+                        className="text-xs text-amber-400 hover:underline"
+                      >
+                        Toon alle vrienden
+                      </button>
+                    )}
                   </div>
-                ) : (
-                  filteredIdeas.map((idea) => {
+
+                  {filteredIdeas.map((idea) => {
                     const isSelected = activeIdea?.id === idea.id;
                     const arr = calculateAnnualRecurringRevenue(idea.monthlyPriceEur, idea.targetCustomers);
                     const is10M = idea.estimatedValuationEur >= 10_000_000;
@@ -917,7 +1048,6 @@ export default function App() {
                             : 'bg-[#111827] border-slate-800 hover:border-slate-700'
                         }`}
                       >
-                        {/* Clean unboxed inline metadata with separators (Zero-Pill Discipline) */}
                         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold text-amber-400">{idea.founderName}</span>
@@ -963,12 +1093,10 @@ export default function App() {
                           {idea.title}
                         </h3>
 
-                        {/* Short Summary */}
                         <p className="text-xs text-slate-300 leading-relaxed line-clamp-2">
                           {idea.shortSummary}
                         </p>
 
-                        {/* Advice snippet from Jurjen's Dot */}
                         <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[11px] text-slate-400">
                           <span className="truncate">
                             <strong className="text-slate-300">Dot Advies:</strong> {idea.dotSummaryAdvice}
@@ -985,47 +1113,60 @@ export default function App() {
                               ? `✓ >€10M Doel Gehaald (${idea.targetCustomers} klanten @ €${idea.monthlyPriceEur}/mnd)`
                               : `Onder €10M drempel (€${idea.monthlyPriceEur}/mnd)`}
                           </span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedIdeaId(idea.id);
-                              handleTriggerDotValidation(idea.id);
-                            }}
-                            className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 hover:text-amber-300"
-                          >
-                            <Sparkles className="w-3 h-3" />
-                            <span>Hervalideer met Dot</span>
-                          </button>
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedIdeaId(idea.id);
+                                handleTriggerDotValidation(idea.id);
+                              }}
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 hover:text-amber-300"
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              <span>Valideer met Dot</span>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Verwijder ${idea.title}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteIdea(idea.id);
+                              }}
+                              className="inline-flex items-center gap-1 text-[11px] text-red-400 hover:text-red-300"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Verwijder</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
-                  })
-                )}
-              </div>
+                  })}
+                </div>
 
-              {/* Right Column: Full Detail View, Jurjen's Dot Advisory Board & Interactive €10M+ Simulator */}
-              <div className="lg:col-span-7">
-                {activeIdea && (
-                  <IdeaDetailPanel
-                    idea={activeIdea}
-                    onVote={handleVote}
-                    onStageChange={handleStageChange}
-                    onUpdateEconomics={handleUpdateEconomics}
-                    onTriggerDotValidation={handleTriggerDotValidation}
-                    onSubmitManualDotAdvice={handleSubmitManualDotAdvice}
-                    isValidatingDot={isValidatingDot}
-                  />
-                )}
+                <div className="lg:col-span-7">
+                  {activeIdea && (
+                    <IdeaDetailPanel
+                      idea={activeIdea}
+                      onVote={handleVote}
+                      onStageChange={handleStageChange}
+                      onUpdateEconomics={handleUpdateEconomics}
+                      onTriggerDotValidation={handleTriggerDotValidation}
+                      onSubmitManualDotAdvice={handleSubmitManualDotAdvice}
+                      isValidatingDot={isValidatingDot}
+                    />
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </main>
 
       {/* Quiet Footer */}
       <footer className="mt-12 border-t border-slate-800/80 py-6 px-6 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-4 max-w-[1400px] w-full mx-auto">
-        <span>TienMiljoen Lab — Gedeelde €10M+ AI Venture Werkplaats voor jullie 10 vrienden</span>
+        <span>TienMiljoen Lab — Gedeelde €10M+ AI Venture Werkplaats voor jullie vriendengroep</span>
         <span>Advisory Board gekoppeld aan de ChatGPT Dot van Jurjen (/api/openapi.json)</span>
       </footer>
 

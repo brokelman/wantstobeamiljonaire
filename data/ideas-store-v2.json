@@ -1,0 +1,50 @@
+{
+  "founders": [
+    {
+      "name": "Jurjen",
+      "role": "Advisory Board & AI Architect",
+      "specialty": "Beheert de ChatGPT Dot & Strategische Validatie"
+    },
+    {
+      "name": "Hans Guido",
+      "role": "Co-Founder & Strategie",
+      "specialty": "Businesscase ontwikkeling & marktvalidatie"
+    },
+    {
+      "name": "Gertjan",
+      "role": "Co-Founder & Sales",
+      "specialty": "B2B acquisitie & klantrelaties"
+    },
+    {
+      "name": "Erik",
+      "role": "Co-Founder & Product",
+      "specialty": "AI-oplossingen & procesautomatisering"
+    },
+    {
+      "name": "Matthijs",
+      "role": "Co-Founder & Finance",
+      "specialty": "ARR-modellering, pricing & €10M-exit math"
+    },
+    {
+      "name": "Martijn",
+      "role": "Co-Founder & Tech",
+      "specialty": "Architectuur, integraties & schaalbaarheid"
+    },
+    {
+      "name": "Frank",
+      "role": "Co-Founder & Operations",
+      "specialty": "Implementatie, processen & klantonboarding"
+    },
+    {
+      "name": "Hermen",
+      "role": "Co-Founder & Growth",
+      "specialty": "Positionering, funnels & schaalbare groei"
+    },
+    {
+      "name": "Rob",
+      "role": "Co-Founder & Customer Success",
+      "specialty": "Domeinexpertise & begeleiden van eerste pilots"
+    }
+  ],
+  "ideas": []
+}

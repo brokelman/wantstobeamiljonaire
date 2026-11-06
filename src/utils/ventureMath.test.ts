@@ -149,3 +149,13 @@ test('netlify.toml disables smart secret scanning false positives for Firebase c
   assert.ok(netlifyToml.includes('SECRETS_SCAN_OMIT_PATHS'));
 });
 
+test('Initial seed state starts with 0 ideas and the 9 requested friends', async () => {
+  const { INITIAL_FOUNDERS, SEED_IDEAS } = await import('../data/seedIdeas');
+  assert.equal(SEED_IDEAS.length, 0);
+  assert.deepEqual(
+    INITIAL_FOUNDERS.map((f) => f.name),
+    ['Jurjen', 'Hans Guido', 'Gertjan', 'Erik', 'Matthijs', 'Martijn', 'Frank', 'Hermen', 'Rob']
+  );
+});
+
+
