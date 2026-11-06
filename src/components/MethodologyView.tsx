@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, Users, FileText, Bot, ArrowRight } from 'lucide-react';
+import { Compass, Users, FileText, Bot, LayoutDashboard } from 'lucide-react';
 import type { FounderMember } from '../data/seedIdeas';
 
 interface MethodologyViewProps {
@@ -9,55 +9,57 @@ interface MethodologyViewProps {
 export const MethodologyView: React.FC<MethodologyViewProps> = ({ founders }) => {
   return (
     <div className="space-y-8">
-      {/* Intro: Hoe ga je met jullie vriendengroep van Zaal-Chaos naar een >€10M Uitwerking? */}
       <div className="bg-[#111827] border border-slate-800 rounded-xl p-6 md:p-8 space-y-4">
         <div className="flex items-center gap-2.5">
           <Compass className="w-5 h-5 text-amber-400" />
           <h2 className="text-xl md:text-2xl font-bold text-slate-100 font-display">
-            Werkwijze: Van Ruw Idee naar Uitwerking via de Dot van Jurjen
+            De 3-Staps Methode: Van Idee naar Uitwerkings-Dashboard
           </h2>
         </div>
         <p className="text-sm text-slate-300 leading-relaxed max-w-4xl">
-          In de eerste brainstormfase heeft het nog geen zin om te gokken op exacte klantprijzen, aantallen klanten of exit-multipliers. Wat wél telt is dat ieder van jullie per naam scherp opschrijft: <strong>welk pijnlijk probleem lossen we op, hoe doet onze AI dat, en hoe denken we er geld mee te verdienen?</strong>
+          Elk ingebracht idee wordt automatisch opgeslagen in de laatst geopende stap, zodat jullie na het afsluiten van de tool altijd direct verder kunnen waar jullie gebleven waren.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-3">
           <div className="p-5 bg-[#0B0F17] border border-slate-800 rounded-lg space-y-2.5">
             <div className="flex items-center gap-2 text-xs font-mono text-amber-400">
               <FileText className="w-4 h-4" />
-              <span>STAP 1 · IDEE + VERDIENMODEL MAILEN</span>
+              <span>STAP 1 · IDEE & TEKSTDOCUMENT</span>
             </div>
             <h3 className="text-sm font-bold text-slate-100">
-              Genereer Tekstdocument & Stuur naar de Dot van Jurjen
+              Breng het Idee + Verdienmodel in & Mail naar de Dot
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Zodra een vriend een idee invoert (inclusief in tekst hoe je denkt er geld mee te verdienen), maakt de site automatisch een gestructureerd tekstdocument. Dit kun je met 1 klik kopiëren om te plakken of direct mailen naar de Dot van Jurjen.
+              Beschrijf het probleem, de AI-oplossing en hoe je denkt er geld mee te verdienen. De tool maakt direct een tekstdocument om te plakken of te mailen naar de Dot van Jurjen.
             </p>
           </div>
 
           <div className="p-5 bg-[#0B0F17] border border-slate-800 rounded-lg space-y-2.5">
             <div className="flex items-center gap-2 text-xs font-mono text-amber-400">
               <Bot className="w-4 h-4" />
-              <span>STAP 2 · FEEDBACK VAN DE DOT INGEVEN</span>
+              <span>STAP 2 · ALLEEN DOT-TERUGKOPPELING</span>
             </div>
             <h3 className="text-sm font-bold text-slate-100">
-              Voer het Oordeel van de Dot van Jurjen in op de Site
+              Plak de Terugkoppeling van de Dot & Klik op &ldquo;Verwerk&rdquo;
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              De Dot van Jurjen beoordeelt als Advisory Board of het probleem, de AI-oplossing en het verdienmodel potentie hebben voor een &gt;€10M businesscase. Je plakt de feedback van de Dot bij het idee in Stap 2.
+              In Stap 2 hoef je alleen de ruwe reactie van de Dot van Jurjen te plakken en op <strong>Verwerk</strong> te klikken. De tool combineert dan alle input van het idee met de terugkoppeling van de Dot.
             </p>
           </div>
 
           <div className="p-5 bg-[#0B0F17] border border-slate-800 rounded-lg space-y-2.5">
             <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
-              <ArrowRight className="w-4 h-4" />
-              <span>STAP 3 · VOLGENDE STAP & UITWERKING</span>
+              <LayoutDashboard className="w-4 h-4" />
+              <span>STAP 3 · HET DASHBOARD & SCORES (0–100)</span>
             </div>
             <h3 className="text-sm font-bold text-slate-100">
-              Gebruik de Dot-Feedback voor Concrete Actie met de Groep
+              Realiteitsscore (0–100), Business Case & Vervolgstappen
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Op basis van de ingevoerde Dot-feedback leg je per idee de concrete vervolgstap vast: wie uit de vriendengroep gaat deze week met potentiële klanten praten of een eerste test bouwen?
+              Op het Stap 3 Dashboard zie je de Dot-score én onze eigen Realiteitsscore (0–100):
+              <br />• <strong>&lt; 50:</strong> Niet levensvatbaar
+              <br />• <strong>50 – 75:</strong> Idee & verdienmodel eerst aanscherpen
+              <br />• <strong>75 – 100:</strong> Concrete vervolgstappen maken
             </p>
           </div>
         </div>
@@ -72,7 +74,7 @@ export const MethodologyView: React.FC<MethodologyViewProps> = ({ founders }) =>
               De Vriendengroep ({founders.length} Co-Founders)
             </h3>
             <p className="text-xs text-slate-400">
-              Iedereen dient onder zijn eigen naam ideeën in en pakt na het oordeel van de Dot van Jurjen een concrete vervolgstap op.
+              Iedereen dient onder zijn eigen naam ideeën in en doorloopt de 3 stappen van idee naar uitwerking.
             </p>
           </div>
         </div>

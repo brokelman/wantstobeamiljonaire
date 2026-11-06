@@ -11,13 +11,14 @@ import {
   Cloud,
   Settings,
   Trash2,
-  FileText,
+  LayoutDashboard,
 } from 'lucide-react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   collection,
   doc,
   setDoc,
+  updateDoc,
   deleteDoc,
   onSnapshot,
   serverTimestamp,
@@ -35,7 +36,8 @@ import {
   filterIdeas,
   buildShortSummary,
   validateIdeaInput,
-  generateDeterministicDotAdvice,
+  synthesizeStep3Dashboard,
+  getViabilityBand,
   type VentureIdea,
   type IdeaFormInput,
   type VentureStage,
@@ -51,38 +53,159 @@ import { ManagePageView } from './components/ManagePageView';
 type ActiveTab = 'ideas' | 'manage' | 'dot_bridge' | 'methodology';
 
 const LOCAL_STORAGE_IDEAS_KEY = 'tienmiljoen_lab_ideas_v3';
+const LEGACY_IDEAS_KEYS = ['tienmiljoen_lab_ideas_v2', 'tienmiljoen_lab_ideas_v1', 'tienmiljoen_lab_ideas'];
 const LOCAL_STORAGE_FOUNDERS_KEY = 'tienmiljoen_lab_founders_v3';
+const LEGACY_FOUNDERS_KEYS = ['tienmiljoen_lab_founders_v2', 'tienmiljoen_lab_founders_v1'];
+const LOCAL_STORAGE_DELETED_IDS_KEY = 'tienmiljoen_lab_deleted_ids_v3';
+const LOCAL_STORAGE_UI_STATE_KEY = 'tienmiljoen_lab_ui_state_v3';
+
+function normalizeClientIdea(raw: Record<string, unknown>): VentureIdea {
+  const now = new Date().toISOString();
+  const stepNum = Number(raw.currentStep);
+  const currentStep: 1 | 2 | 3 =
+    stepNum === 2 || stepNum === 3
+      ? stepNum
+      : raw.dotVerdict && raw.dotVerdict !== 'pending'
+      ? 3
+      : 1;
+
+  return {
+    id: String(raw.id || `idea-${Date.now()}`),
+    title: String(raw.title || 'Naamloos Idee').slice(0, 120),
+    founderName: String(raw.founderName || 'Jurjen').slice(0, 60),
+    authorUid: String(raw.authorUid || 'local-founder').slice(0, 128),
+    shortSummary: String(raw.shortSummary || 'AI-oplossing in ontwikkeling.').slice(0, 600),
+    problemStatement: String(raw.problemStatement || 'Probleemstelling nog aan te vullen.').slice(0, 1500),
+    aiSolution: String(raw.aiSolution || 'AI-oplossing nog aan te vullen.').slice(0, 1500),
+    targetMarket: String(raw.targetMarket || 'B2B Doelmarkt').slice(0, 200),
+    revenueModel: String(
+      raw.revenueModel ||
+        (typeof raw.monthlyPriceEur === 'number' && raw.monthlyPriceEur > 0
+          ? `Maandelijks B2B-abonnement (€${raw.monthlyPriceEur}/mnd)`
+          : 'Maandelijks abonnement / licentiemodel')
+    ).slice(0, 1500),
+    stage: (['idea', 'validated', 'business_case', 'execution'].includes(String(raw.stage))
+      ? raw.stage
+      : 'idea') as VentureStage,
+    currentStep,
+    votesCount: typeof raw.votesCount === 'number' ? raw.votesCount : 1,
+    dotRawFeedback: String(raw.dotRawFeedback || '').slice(0, 4000),
+    dotVerdict: (['pending', 'go', 'pivot', 'no_go'].includes(String(raw.dotVerdict))
+      ? raw.dotVerdict
+      : 'pending') as DotVerdict,
+    dotScore: typeof raw.dotScore === 'number' ? raw.dotScore : 0,
+    aiRealityScore:
+      typeof raw.aiRealityScore === 'number'
+        ? raw.aiRealityScore
+        : typeof raw.dotScore === 'number'
+        ? raw.dotScore
+        : 0,
+    businessCaseSummary: String(
+      raw.businessCaseSummary ||
+        'Wordt gegenereerd in Stap 3 zodra je in Stap 2 op "Verwerk" klikt.'
+    ).slice(0, 2000),
+    dotSummaryAdvice: String(
+      raw.dotSummaryAdvice || 'Wacht op terugkoppeling van de Dot van Jurjen (Stap 2).'
+    ).slice(0, 2000),
+    dotNextSteps: String(
+      raw.dotNextSteps ||
+        'Kopieer of mail het tekstdocument in Stap 1 naar de Dot van Jurjen en plak de reactie in Stap 2.'
+    ).slice(0, 2000),
+    dotCriticalRisk: String(raw.dotCriticalRisk || 'Nog niet geanalyseerd.').slice(0, 1000),
+    createdAt: String(raw.createdAt || now),
+    updatedAt: String(raw.updatedAt || now),
+  };
+}
+
+function loadInitialLocalIdeas(): VentureIdea[] {
+  try {
+    const allKeys = [LOCAL_STORAGE_IDEAS_KEY, ...LEGACY_IDEAS_KEYS];
+    const mergedMap = new Map<string, VentureIdea>();
+    for (const key of allKeys) {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((item) => {
+            if (item && typeof item.id === 'string') {
+              const norm = normalizeClientIdea(item);
+              if (!mergedMap.has(norm.id)) {
+                mergedMap.set(norm.id, norm);
+              }
+            }
+          });
+        }
+      }
+    }
+    if (mergedMap.size > 0) {
+      return Array.from(mergedMap.values());
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return SEED_IDEAS;
+}
+
+function loadInitialLocalFounders(): FounderMember[] {
+  try {
+    const allKeys = [LOCAL_STORAGE_FOUNDERS_KEY, ...LEGACY_FOUNDERS_KEYS];
+    for (const key of allKeys) {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return INITIAL_FOUNDERS;
+}
+
+function loadDeletedIds(): string[] {
+  try {
+    const saved = localStorage.getItem(LOCAL_STORAGE_DELETED_IDS_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function loadSavedUiState(): { activeTab: ActiveTab; selectedIdeaId: string; selectedFounder: string } {
+  try {
+    const saved = localStorage.getItem(LOCAL_STORAGE_UI_STATE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        activeTab: ['ideas', 'manage', 'dot_bridge', 'methodology'].includes(parsed.activeTab)
+          ? parsed.activeTab
+          : 'ideas',
+        selectedIdeaId: typeof parsed.selectedIdeaId === 'string' ? parsed.selectedIdeaId : '',
+        selectedFounder: typeof parsed.selectedFounder === 'string' ? parsed.selectedFounder : 'ALL',
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return { activeTab: 'ideas', selectedIdeaId: '', selectedFounder: 'ALL' };
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('ideas');
-  const [ideas, setIdeas] = useState<VentureIdea[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_IDEAS_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return SEED_IDEAS;
-  });
-  const [founders, setFounders] = useState<FounderMember[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_FOUNDERS_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return INITIAL_FOUNDERS;
-  });
-  const [selectedIdeaId, setSelectedIdeaId] = useState<string>('');
+  const initialUi = loadSavedUiState();
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialUi.activeTab);
+  const [ideas, setIdeas] = useState<VentureIdea[]>(loadInitialLocalIdeas);
+  const [founders, setFounders] = useState<FounderMember[]>(loadInitialLocalFounders);
+  const [deletedIds, setDeletedIds] = useState<string[]>(loadDeletedIds);
+  const [selectedIdeaId, setSelectedIdeaId] = useState<string>(initialUi.selectedIdeaId);
 
   // Filters
-  const [selectedFounder, setSelectedFounder] = useState<string>('ALL');
+  const [selectedFounder, setSelectedFounder] = useState<string>(initialUi.selectedFounder);
   const [selectedStage, setSelectedStage] = useState<string>('ALL');
   const [selectedVerdict, setSelectedVerdict] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -98,7 +221,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
 
-  // Persist to localStorage for static hosting resilience
+  // Persist ideas, founders, deletedIds, and last active UI state to localStorage immediately
   useEffect(() => {
     try {
       localStorage.setItem(LOCAL_STORAGE_IDEAS_KEY, JSON.stringify(ideas));
@@ -115,28 +238,59 @@ export default function App() {
     }
   }, [founders]);
 
-  // 1. Load shared ideas and founders from Express backend if available
-  const fetchBackendIdeas = async () => {
+  useEffect(() => {
     try {
-      const res = await fetch('/api/ideas');
+      localStorage.setItem(LOCAL_STORAGE_DELETED_IDS_KEY, JSON.stringify(deletedIds));
+    } catch {
+      // ignore
+    }
+  }, [deletedIds]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        LOCAL_STORAGE_UI_STATE_KEY,
+        JSON.stringify({ activeTab, selectedIdeaId, selectedFounder })
+      );
+    } catch {
+      // ignore
+    }
+  }, [activeTab, selectedIdeaId, selectedFounder]);
+
+  // 1. Bidirectional sync with Express backend so local ideas are NEVER overwritten by an empty server restart
+  const syncWithBackend = async () => {
+    try {
+      const localIdeasNow = loadInitialLocalIdeas();
+      const localFoundersNow = loadInitialLocalFounders();
+      const localDeletedNow = loadDeletedIds();
+
+      const res = await fetch('/api/ideas/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ideas: localIdeasNow,
+          founders: localFoundersNow,
+          deletedIds: localDeletedNow,
+        }),
+      });
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         if (Array.isArray(data.ideas)) {
-          setIdeas(data.ideas);
+          setIdeas(data.ideas.map((i: Record<string, unknown>) => normalizeClientIdea(i)));
         }
         if (Array.isArray(data.founders) && data.founders.length > 0) {
           setFounders(data.founders);
         }
       }
     } catch {
-      // Static host (e.g. Netlify) without Express backend — uses localStorage & Firestore
+      // Static host (e.g. Netlify) without Express backend — uses localStorage & Firestore seamlessly
     }
   };
 
   useEffect(() => {
     testFirestoreConnection();
-    fetchBackendIdeas();
+    syncWithBackend();
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
@@ -156,31 +310,29 @@ export default function App() {
           const firestoreIdeas: VentureIdea[] = [];
           snapshot.forEach((docSnap) => {
             const d = docSnap.data();
-            firestoreIdeas.push({
-              id: docSnap.id,
-              title: d.title,
-              founderName: d.founderName,
-              authorUid: d.authorUid,
-              shortSummary: d.shortSummary,
-              problemStatement: d.problemStatement,
-              aiSolution: d.aiSolution,
-              targetMarket: d.targetMarket,
-              revenueModel: d.revenueModel || 'Nog in te vullen',
-              stage: d.stage,
-              votesCount: d.votesCount,
-              dotVerdict: d.dotVerdict,
-              dotScore: d.dotScore,
-              dotSummaryAdvice: d.dotSummaryAdvice,
-              dotNextSteps: d.dotNextSteps,
-              dotCriticalRisk: d.dotCriticalRisk,
-              createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : String(d.createdAt || ''),
-              updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : String(d.updatedAt || ''),
-            });
+            firestoreIdeas.push(
+              normalizeClientIdea({
+                ...d,
+                id: docSnap.id,
+                createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : String(d.createdAt || ''),
+                updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : String(d.updatedAt || ''),
+              })
+            );
           });
           setIdeas((prev) => {
+            const deletedSet = new Set(loadDeletedIds());
             const map = new Map<string, VentureIdea>();
-            prev.forEach((item) => map.set(item.id, item));
-            firestoreIdeas.forEach((item) => map.set(item.id, item));
+            prev.forEach((item) => {
+              if (!deletedSet.has(item.id)) map.set(item.id, item);
+            });
+            firestoreIdeas.forEach((item) => {
+              if (!deletedSet.has(item.id)) {
+                const existing = map.get(item.id);
+                if (!existing || new Date(item.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
+                  map.set(item.id, item);
+                }
+              }
+            });
             return Array.from(map.values());
           });
         }
@@ -215,27 +367,48 @@ export default function App() {
     const cleanId = idea.id.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 120);
     const path = `ideas/${cleanId}`;
     try {
-      await setDoc(doc(db, 'ideas', cleanId), {
-        title: idea.title.slice(0, 120),
-        founderName: idea.founderName.slice(0, 60),
-        authorUid: currentUser.uid,
-        shortSummary: idea.shortSummary.slice(0, 600),
-        problemStatement: idea.problemStatement.slice(0, 1500),
-        aiSolution: idea.aiSolution.slice(0, 1500),
-        targetMarket: idea.targetMarket.slice(0, 200),
-        revenueModel: idea.revenueModel.slice(0, 1500),
-        stage: idea.stage,
-        votesCount: idea.votesCount,
-        dotVerdict: idea.dotVerdict,
-        dotScore: idea.dotScore,
-        dotSummaryAdvice: idea.dotSummaryAdvice.slice(0, 2000),
-        dotNextSteps: idea.dotNextSteps.slice(0, 2000),
-        dotCriticalRisk: idea.dotCriticalRisk.slice(0, 1000),
-        createdAt: isNew ? serverTimestamp() : serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      if (isNew) {
+        await setDoc(doc(db, 'ideas', cleanId), {
+          title: idea.title.slice(0, 120),
+          founderName: idea.founderName.slice(0, 60),
+          authorUid: currentUser.uid,
+          shortSummary: idea.shortSummary.slice(0, 600),
+          problemStatement: idea.problemStatement.slice(0, 1500),
+          aiSolution: idea.aiSolution.slice(0, 1500),
+          targetMarket: idea.targetMarket.slice(0, 200),
+          revenueModel: idea.revenueModel.slice(0, 1500),
+          stage: idea.stage,
+          currentStep: idea.currentStep,
+          votesCount: idea.votesCount,
+          dotRawFeedback: idea.dotRawFeedback.slice(0, 4000),
+          dotVerdict: idea.dotVerdict,
+          dotScore: idea.dotScore,
+          aiRealityScore: idea.aiRealityScore,
+          businessCaseSummary: idea.businessCaseSummary.slice(0, 2000),
+          dotSummaryAdvice: idea.dotSummaryAdvice.slice(0, 2000),
+          dotNextSteps: idea.dotNextSteps.slice(0, 2000),
+          dotCriticalRisk: idea.dotCriticalRisk.slice(0, 1000),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(doc(db, 'ideas', cleanId), {
+          votesCount: idea.votesCount,
+          stage: idea.stage,
+          currentStep: idea.currentStep,
+          dotRawFeedback: idea.dotRawFeedback.slice(0, 4000),
+          dotVerdict: idea.dotVerdict,
+          dotScore: idea.dotScore,
+          aiRealityScore: idea.aiRealityScore,
+          businessCaseSummary: idea.businessCaseSummary.slice(0, 2000),
+          dotSummaryAdvice: idea.dotSummaryAdvice.slice(0, 2000),
+          dotNextSteps: idea.dotNextSteps.slice(0, 2000),
+          dotCriticalRisk: idea.dotCriticalRisk.slice(0, 1000),
+          updatedAt: serverTimestamp(),
+        });
+      }
     } catch (error) {
-      handleFirestoreError(error, isNew ? OperationType.CREATE : OperationType.WRITE, path);
+      handleFirestoreError(error, isNew ? OperationType.CREATE : OperationType.UPDATE, path);
     }
   };
 
@@ -252,7 +425,7 @@ export default function App() {
 
   const showToast = (msg: string) => {
     setStatusMessage(msg);
-    setTimeout(() => setStatusMessage(null), 3500);
+    setTimeout(() => setStatusMessage(null), 4000);
   };
 
   const handleCreateIdea = async (input: IdeaFormInput) => {
@@ -274,7 +447,7 @@ export default function App() {
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        created = data.idea;
+        created = normalizeClientIdea(data.idea);
       }
     } catch {
       // Static fallback below
@@ -293,12 +466,16 @@ export default function App() {
         targetMarket: input.targetMarket.trim().slice(0, 200),
         revenueModel: input.revenueModel.trim().slice(0, 1500),
         stage: 'idea',
+        currentStep: 1,
         votesCount: 1,
+        dotRawFeedback: '',
         dotVerdict: 'pending',
         dotScore: 0,
-        dotSummaryAdvice: 'Wacht op validatie door de ChatGPT Dot van Jurjen.',
+        aiRealityScore: 0,
+        businessCaseSummary: 'Wordt gegenereerd in Stap 3 zodra je in Stap 2 op "Verwerk" klikt.',
+        dotSummaryAdvice: 'Wacht op terugkoppeling van de Dot van Jurjen (Stap 2).',
         dotNextSteps:
-          'Kopieer of mail het gegenereerde tekstdocument (Stap 1) naar de Dot van Jurjen en voer daarna de feedback in bij Stap 2.',
+          'Kopieer of mail het gegenereerde tekstdocument (Stap 1) naar de Dot van Jurjen en plak de terugkoppeling in Stap 2.',
         dotCriticalRisk: 'Nog niet geanalyseerd.',
         createdAt: now,
         updatedAt: now,
@@ -314,7 +491,7 @@ export default function App() {
       ]);
     }
     await syncIdeaToFirestoreIfSignedIn(created, true);
-    showToast(`Idee "${created.title}" opgeslagen! Tekstdocument voor de Dot van Jurjen staat klaar (Stap 1).`);
+    showToast(`Idee "${created.title}" opgeslagen in Stap 1! Kopieer of mail nu het tekstdocument naar de Dot van Jurjen.`);
   };
 
   const handleUpdateIdea = async (ideaId: string, updatedFields: Partial<VentureIdea>) => {
@@ -328,7 +505,7 @@ export default function App() {
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        updatedIdea = data.idea;
+        updatedIdea = normalizeClientIdea(data.idea);
       }
     } catch {
       // Static fallback below
@@ -343,7 +520,6 @@ export default function App() {
           updatedAt: new Date().toISOString(),
         };
         syncIdeaToFirestoreIfSignedIn(next, false);
-        showToast(`Idee "${next.title}" bijgewerkt!`);
         return next;
       })
     );
@@ -351,6 +527,7 @@ export default function App() {
 
   const handleDeleteIdea = async (ideaId: string) => {
     const target = ideas.find((i) => i.id === ideaId);
+    setDeletedIds((prev) => (prev.includes(ideaId) ? prev : [...prev, ideaId]));
     try {
       await fetch(`/api/ideas/${ideaId}`, {
         method: 'DELETE',
@@ -374,7 +551,7 @@ export default function App() {
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        updatedIdea = data.idea;
+        updatedIdea = normalizeClientIdea(data.idea);
       }
     } catch {
       // Static fallback below
@@ -395,97 +572,65 @@ export default function App() {
     await handleUpdateIdea(ideaId, { stage });
   };
 
-  const handleTriggerDotValidation = async (ideaId: string) => {
-    setIsValidatingDot(true);
-    try {
-      let updatedIdea: VentureIdea | null = null;
-      try {
-        const res = await fetch(`/api/ideas/${ideaId}/validate-with-dot`, {
-          method: 'POST',
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (res.ok && contentType.includes('application/json')) {
-          const data = await res.json();
-          updatedIdea = data.idea;
-        }
-      } catch {
-        // Static fallback below
-      }
-
-      setIdeas((prev) =>
-        prev.map((item) => {
-          if (item.id !== ideaId) return item;
-          if (updatedIdea) {
-            syncIdeaToFirestoreIfSignedIn(updatedIdea, false);
-            showToast(`Concept-feedback van de Dot van Jurjen ingevuld voor "${updatedIdea.title}"!`);
-            return updatedIdea;
-          }
-          const fallback = generateDeterministicDotAdvice(item);
-          const next: VentureIdea = {
-            ...item,
-            dotVerdict: fallback.dotVerdict,
-            dotScore: fallback.dotScore,
-            dotSummaryAdvice: fallback.dotSummaryAdvice,
-            dotNextSteps: fallback.dotNextSteps,
-            dotCriticalRisk: fallback.dotCriticalRisk,
-            stage: fallback.recommendedStage,
-            updatedAt: new Date().toISOString(),
-          };
-          syncIdeaToFirestoreIfSignedIn(next, false);
-          showToast(`Concept-feedback van de Dot van Jurjen ingevuld voor "${next.title}"!`);
-          return next;
-        })
-      );
-    } finally {
-      setIsValidatingDot(false);
-    }
+  const handleStepChange = async (ideaId: string, currentStep: 1 | 2 | 3) => {
+    await handleUpdateIdea(ideaId, { currentStep });
   };
 
-  const handleSubmitManualDotAdvice = async (
-    ideaId: string,
-    payload: {
-      dotVerdict: DotVerdict;
-      dotScore: number;
-      dotSummaryAdvice: string;
-      dotNextSteps: string;
-      dotCriticalRisk: string;
-      nextStage?: VentureStage;
-    }
-  ) => {
-    let updatedIdea: VentureIdea | null = null;
-    try {
-      const res = await fetch(`/api/ideas/${ideaId}/advise`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        updatedIdea = data.idea;
-      }
-    } catch {
-      // Static fallback below
-    }
+  // STEP 2 -> STEP 3 Processor ("Verwerk" button)
+  const handleProcessDotFeedback = async (ideaId: string, dotRawFeedback: string) => {
+    setIsValidatingDot(true);
 
+    // 1. Immediate optimistic synthesis & persistence so Step 3 Dashboard opens without delay
     setIdeas((prev) =>
       prev.map((item) => {
         if (item.id !== ideaId) return item;
-        const next: VentureIdea = updatedIdea || {
+        const synth = synthesizeStep3Dashboard(item, dotRawFeedback);
+        const optimisticNext: VentureIdea = {
           ...item,
-          dotVerdict: payload.dotVerdict,
-          dotScore: payload.dotScore,
-          dotSummaryAdvice: payload.dotSummaryAdvice,
-          dotNextSteps: payload.dotNextSteps,
-          dotCriticalRisk: payload.dotCriticalRisk,
-          stage: payload.nextStage || (item.stage === 'idea' ? (payload.dotVerdict === 'go' ? 'business_case' : 'validated') : item.stage),
+          dotRawFeedback,
+          dotVerdict: synth.dotVerdict,
+          dotScore: synth.dotScore,
+          aiRealityScore: synth.aiRealityScore,
+          businessCaseSummary: synth.businessCaseSummary,
+          dotSummaryAdvice: synth.dotSummaryAdvice,
+          dotNextSteps: synth.dotNextSteps,
+          dotCriticalRisk: synth.dotCriticalRisk,
+          stage: synth.recommendedStage,
+          currentStep: 3,
           updatedAt: new Date().toISOString(),
         };
-        syncIdeaToFirestoreIfSignedIn(next, false);
-        showToast(`Feedback van de Dot van Jurjen & volgende stap opgeslagen bij "${next.title}"!`);
-        return next;
+        const band = getViabilityBand(optimisticNext.dotScore, optimisticNext.aiRealityScore);
+        showToast(
+          `Stap 3 Dashboard klaar voor "${optimisticNext.title}" — ${band.label} (Score: ${band.effectiveScore}/100)`
+        );
+        return optimisticNext;
       })
     );
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(`/api/ideas/${ideaId}/process-dot-feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dotRawFeedback }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        const serverIdea = normalizeClientIdea(data.idea);
+        setIdeas((prev) =>
+          prev.map((item) => (item.id === ideaId ? serverIdea : item))
+        );
+        await syncIdeaToFirestoreIfSignedIn(serverIdea, false);
+      }
+    } catch {
+      // Optimistic synthesis is already applied and saved to localStorage
+    } finally {
+      setIsValidatingDot(false);
+    }
   };
 
   const handleAddFounderObject = async (founder: FounderMember) => {
@@ -521,7 +666,9 @@ export default function App() {
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         if (Array.isArray(data.founders)) setFounders(data.founders);
-        if (Array.isArray(data.ideas)) setIdeas(data.ideas);
+        if (Array.isArray(data.ideas)) {
+          setIdeas(data.ideas.map((i: Record<string, unknown>) => normalizeClientIdea(i)));
+        }
         showToast(`Gegevens van ${updated.name} bijgewerkt!`);
         return;
       }
@@ -585,8 +732,10 @@ export default function App() {
   };
 
   // Summary metrics across all ideas
-  const dotValidatedCount = ideas.filter((i) => i.dotVerdict !== 'pending').length;
-  const dotGoCases = ideas.filter((i) => i.dotVerdict === 'go').length;
+  const step3ProcessedCount = ideas.filter((i) => i.currentStep === 3 || i.dotVerdict !== 'pending').length;
+  const actionReadyCount = ideas.filter(
+    (i) => i.dotVerdict !== 'pending' && getViabilityBand(i.dotScore, i.aiRealityScore).band === 'viable_action_ready'
+  ).length;
 
   // Count ideas per friend
   const countByFounder = useMemo(() => {
@@ -625,7 +774,7 @@ export default function App() {
                 : 'border-transparent hover:text-slate-200'
             }`}
           >
-            Ideeën per Naam
+            Ideeën & 3-Staps Dashboard
           </button>
           <button
             type="button"
@@ -647,7 +796,7 @@ export default function App() {
                 : 'border-transparent hover:text-slate-200'
             }`}
           >
-            Dot Tekstdocument & Feedback
+            Dot Tekstdocument & Verwerk
           </button>
           <button
             type="button"
@@ -684,7 +833,7 @@ export default function App() {
             activeTab === 'ideas' ? 'bg-amber-400 text-slate-950 font-semibold' : 'text-slate-300'
           }`}
         >
-          Ideeën per Naam
+          Ideeën & Dashboard
         </button>
         <button
           type="button"
@@ -702,7 +851,7 @@ export default function App() {
             activeTab === 'dot_bridge' ? 'bg-amber-400 text-slate-950 font-semibold' : 'text-slate-300'
           }`}
         >
-          Dot Tekstdocument & Feedback
+          Dot Tekstdocument & Verwerk
         </button>
         <button
           type="button"
@@ -729,45 +878,45 @@ export default function App() {
         {/* Executive Context & KPI Strip */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="p-4 bg-[#111827] border border-slate-800 rounded-xl">
-            <div className="text-xs text-slate-400">Vriendengroep & Ideeën</div>
+            <div className="text-xs text-slate-400">Opgeslagen Ideeën & Vrienden</div>
             <div className="text-2xl font-bold font-mono tabular-nums text-slate-100 mt-1">
               {ideas.length} ideeën · {founders.length} vrienden
             </div>
             <div className="text-xs text-slate-400 mt-1">
-              Georganiseerd per naam buiten de vergaderzaal
+              Blijft bewaard in laatst geopende status
             </div>
           </div>
 
           <div className="p-4 bg-[#111827] border border-slate-800 rounded-xl">
-            <div className="text-xs text-slate-400">Stap 1: Tekstdocument voor Jurjen’s Dot</div>
+            <div className="text-xs text-slate-400">Stap 1 → Stap 2 → Stap 3 Flow</div>
             <div className="text-2xl font-bold font-mono tabular-nums text-amber-400 mt-1">
-              Direct Kopiëren & Mailen
+              {step3ProcessedCount} van {ideas.length} in Stap 3
             </div>
             <div className="text-xs text-slate-400 mt-1">
-              Inclusief probleem, AI-oplossing & verdienmodel
+              Idee + Dot-terugkoppeling verwerkt tot dashboard
             </div>
           </div>
 
           <div className="p-4 bg-[#111827] border border-slate-800 rounded-xl">
-            <div className="text-xs text-slate-400">Stap 2: Feedback van Dot & Volgende Stap</div>
+            <div className="text-xs text-slate-400">Realiteitsscore 75–100 (Actieklaar)</div>
             <div className="text-2xl font-bold font-mono tabular-nums text-emerald-400 mt-1">
-              {dotValidatedCount} van {ideas.length} beoordeeld ({dotGoCases} GO)
+              {actionReadyCount} kansrijke cases
             </div>
             <div className="text-xs text-slate-400 mt-1">
-              Gebruik Dot-feedback voor de volgende stap
+              &lt;50 niet levensvatbaar · 50–75 aanscherpen
             </div>
           </div>
 
           <div className="p-4 bg-[#111827] border border-slate-800 rounded-xl flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-400">Cloud Synchronisatie</span>
-              <Cloud className="w-4 h-4 text-slate-400" />
+              <span className="text-xs text-slate-400">Automatische Opslag</span>
+              <Cloud className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="mt-2 flex items-center justify-between gap-2">
               {currentUser ? (
                 <>
                   <span className="text-xs text-emerald-400 truncate">
-                    Ingelogd: {currentUser.displayName || currentUser.email}
+                    Cloud + Browser Sync ({currentUser.displayName || currentUser.email})
                   </span>
                   <button
                     type="button"
@@ -779,7 +928,7 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <span className="text-xs text-slate-300">Opslag Actief</span>
+                  <span className="text-xs text-emerald-400">Browser + Server Opslag Actief</span>
                   <button
                     type="button"
                     onClick={() => signInWithGoogle().catch(() => {})}
@@ -809,7 +958,11 @@ export default function App() {
         {activeTab === 'dot_bridge' && (
           <JurjenDotBridgeView
             ideas={ideas}
-            onSubmitManualDotAdvice={handleSubmitManualDotAdvice}
+            onProcessDotFeedback={handleProcessDotFeedback}
+            onNavigateToIdeaStep3={(ideaId) => {
+              setSelectedIdeaId(ideaId);
+              setActiveTab('ideas');
+            }}
           />
         )}
 
@@ -828,7 +981,7 @@ export default function App() {
                     Filter Ideeën per Naam ({founders.length} Vrienden)
                   </h2>
                   <p className="text-xs text-slate-400">
-                    Klik op een naam om de ingediende ideeën, het verdienmodel, het gegenereerde tekstdocument voor Jurjen’s Dot (Stap 1) en de vervolgstappen (Stap 2) te bekijken.
+                    Klik op een naam om de ingebrachte ideeën te bekijken in Stap 1 (Tekstdocument), Stap 2 (Dot-terugkoppeling inbrengen) of Stap 3 (Het Verwerkte Dashboard).
                   </p>
                 </div>
 
@@ -926,26 +1079,26 @@ export default function App() {
                     onChange={(e) => setSelectedStage(e.target.value)}
                     className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-200"
                   >
-                    <option value="ALL">Alle Fases (1 t/m 4)</option>
-                    <option value="idea">1. Idee & Verdienmodel</option>
-                    <option value="validated">2. Dot Feedback Ontvangen</option>
-                    <option value="business_case">3. Uitwerking & Validatie</option>
-                    <option value="execution">4. Klantpilots & Bouw</option>
+                    <option value="ALL">Alle Fases</option>
+                    <option value="idea">1. Idee & Tekstdocument</option>
+                    <option value="validated">2. Gevalideerd / Aanscherpen</option>
+                    <option value="business_case">3. Concrete Vervolgstappen (75+)</option>
+                    <option value="execution">4. In Executie</option>
                   </select>
                 </div>
 
                 <div>
                   <select
-                    aria-label="Filter op oordeel van Jurjen's Dot"
+                    aria-label="Filter op scoreband"
                     value={selectedVerdict}
                     onChange={(e) => setSelectedVerdict(e.target.value)}
                     className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-200"
                   >
-                    <option value="ALL">Alle Oordelen van Dot van Jurjen</option>
-                    <option value="go">GO — Kansrijke Case</option>
-                    <option value="pivot">PIVOT — Aanpassing Vereist</option>
-                    <option value="no_go">NO-GO — Afvallen</option>
-                    <option value="pending">Wacht op Validatie</option>
+                    <option value="ALL">Alle Scorebanden</option>
+                    <option value="go">Score 75–100: Concrete Vervolgstappen</option>
+                    <option value="pivot">Score 50–75: Eerst Aanscherpen</option>
+                    <option value="no_go">Score &lt;50: Niet Levensvatbaar</option>
+                    <option value="pending">Nog in Stap 1 of 2</option>
                   </select>
                 </div>
               </div>
@@ -960,7 +1113,7 @@ export default function App() {
                     : `Nog geen ideeën gevonden voor ${selectedFounder === 'ALL' ? 'dit filter' : selectedFounder}`}
                 </h3>
                 <p className="text-sm text-slate-400 max-w-xl mx-auto leading-relaxed">
-                  Selecteer een naam ({founders.map((f) => f.name).join(', ')}) en dien het eerste AI-idee in (inclusief hoe je denkt er geld mee te verdienen). Daarna genereert de site direct een tekstdocument om te plakken of te mailen naar de Dot van Jurjen.
+                  Dien een idee in voor een van de vrienden ({founders.map((f) => f.name).join(', ')}). Elk idee wordt automatisch opgeslagen in de laatst geopende stap (Stap 1: Idee & Tekstdocument → Stap 2: Dot-terugkoppeling inbrengen → Stap 3: Dashboard met Score 0–100 & Vervolgstappen).
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                   <button
@@ -988,11 +1141,11 @@ export default function App() {
             ) : (
               /* Main 2-Column Workspace when ideas exist */
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                <div className="lg:col-span-5 space-y-3">
+                <div className="lg:col-span-4 space-y-3">
                   <div className="flex items-center justify-between px-1">
                     <span className="text-xs font-semibold text-slate-400">
                       {selectedFounder === 'ALL'
-                        ? `Overzicht van alle ${filteredIdeas.length} ideeën`
+                        ? `Opgeslagen ideeën (${filteredIdeas.length})`
                         : `Ideeën van ${selectedFounder} (${filteredIdeas.length})`}
                     </span>
                     {selectedFounder !== 'ALL' && (
@@ -1008,6 +1161,7 @@ export default function App() {
 
                   {filteredIdeas.map((idea) => {
                     const isSelected = activeIdea?.id === idea.id;
+                    const band = getViabilityBand(idea.dotScore, idea.aiRealityScore);
 
                     return (
                       <div
@@ -1023,32 +1177,29 @@ export default function App() {
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold text-amber-400">{idea.founderName}</span>
                             <span aria-hidden="true">·</span>
-                            <span>{idea.targetMarket}</span>
+                            <span className="font-mono text-slate-300">Stap {idea.currentStep || 1}/3</span>
                           </div>
 
                           <div className="flex items-center gap-1 text-xs font-mono tabular-nums">
-                            {idea.dotVerdict === 'go' && (
-                              <span className="text-emerald-400 inline-flex items-center gap-1">
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                Dot GO ({idea.dotScore})
-                              </span>
-                            )}
-                            {idea.dotVerdict === 'pivot' && (
-                              <span className="text-amber-400 inline-flex items-center gap-1">
-                                <AlertTriangle className="w-3.5 h-3.5" />
-                                Dot PIVOT ({idea.dotScore})
-                              </span>
-                            )}
-                            {idea.dotVerdict === 'no_go' && (
-                              <span className="text-red-400 inline-flex items-center gap-1">
-                                <XCircle className="w-3.5 h-3.5" />
-                                Dot NO-GO ({idea.dotScore})
-                              </span>
-                            )}
-                            {idea.dotVerdict === 'pending' && (
+                            {idea.dotVerdict === 'pending' ? (
                               <span className="text-slate-400 inline-flex items-center gap-1">
                                 <Clock className="w-3.5 h-3.5" />
-                                Stap 1 klaar voor Dot
+                                Stap {idea.currentStep || 1}
+                              </span>
+                            ) : band.band === 'viable_action_ready' ? (
+                              <span className="text-emerald-400 inline-flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                {band.effectiveScore}/100 (Actieklaar)
+                              </span>
+                            ) : band.band === 'needs_sharpening' ? (
+                              <span className="text-amber-400 inline-flex items-center gap-1">
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                                {band.effectiveScore}/100 (Aanscherpen)
+                              </span>
+                            ) : (
+                              <span className="text-red-400 inline-flex items-center gap-1">
+                                <XCircle className="w-3.5 h-3.5" />
+                                {band.effectiveScore}/100 (&lt;50)
                               </span>
                             )}
                           </div>
@@ -1062,14 +1213,16 @@ export default function App() {
                           {idea.shortSummary}
                         </p>
 
-                        <div className="text-xs text-amber-300/90 line-clamp-1">
-                          <strong className="text-slate-400">Verdienmodel:</strong> {idea.revenueModel}
-                        </div>
-
                         <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[11px] text-slate-400">
                           <span className="inline-flex items-center gap-1 text-slate-300">
-                            <FileText className="w-3 h-3 text-amber-400" />
-                            <span>Tekstdocument & Dot Feedback →</span>
+                            <LayoutDashboard className="w-3 h-3 text-amber-400" />
+                            <span>
+                              {idea.currentStep === 3
+                                ? 'Stap 3 Dashboard Gereed'
+                                : idea.currentStep === 2
+                                ? 'Stap 2: Dot-Terugkoppeling'
+                                : 'Stap 1: Tekstdocument'}
+                            </span>
                           </span>
                           <div className="flex items-center gap-3">
                             <span className="inline-flex items-center gap-1 font-mono tabular-nums text-slate-300">
@@ -1095,14 +1248,15 @@ export default function App() {
                   })}
                 </div>
 
-                <div className="lg:col-span-7">
+                <div className="lg:col-span-8">
                   {activeIdea && (
                     <IdeaDetailPanel
                       idea={activeIdea}
                       onVote={handleVote}
                       onStageChange={handleStageChange}
-                      onTriggerDotValidation={handleTriggerDotValidation}
-                      onSubmitManualDotAdvice={handleSubmitManualDotAdvice}
+                      onStepChange={handleStepChange}
+                      onUpdateIdea={handleUpdateIdea}
+                      onProcessDotFeedback={handleProcessDotFeedback}
                       isValidatingDot={isValidatingDot}
                     />
                   )}
@@ -1116,7 +1270,7 @@ export default function App() {
       {/* Quiet Footer */}
       <footer className="mt-12 border-t border-slate-800/80 py-6 px-6 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-4 max-w-[1400px] w-full mx-auto">
         <span>TienMiljoen Lab — Gedeelde AI Venture Werkplaats voor jullie vriendengroep</span>
-        <span>Stap 1: Tekstdocument voor de Dot van Jurjen · Stap 2: Feedback & Volgende Stap</span>
+        <span>Stap 1: Idee & Tekstdocument · Stap 2: Dot-Terugkoppeling & Verwerk · Stap 3: Dashboard (Score 0–100)</span>
       </footer>
 
       <NewIdeaModal

@@ -8,7 +8,8 @@ import { createServer as createViteServer } from 'vite';
 import {
   buildShortSummary,
   validateIdeaInput,
-  generateDeterministicDotAdvice,
+  synthesizeStep3Dashboard,
+  getViabilityBand,
   type VentureIdea,
   type DotVerdict,
   type VentureStage,
@@ -22,10 +23,67 @@ const __dirname = path.dirname(__filename);
 
 const DATA_DIR = path.join(__dirname, 'data');
 const STORE_PATH = path.join(DATA_DIR, 'ideas-store-v3.json');
+const LEGACY_STORE_PATHS = [
+  path.join(DATA_DIR, 'ideas-store-v2.json'),
+  path.join(DATA_DIR, 'ideas-store.json'),
+];
 
 interface StoreState {
   founders: FounderMember[];
   ideas: VentureIdea[];
+}
+
+function normalizeIdea(raw: Partial<VentureIdea> & Record<string, unknown>): VentureIdea {
+  const now = new Date().toISOString();
+  const stepNum = Number(raw.currentStep);
+  const currentStep: 1 | 2 | 3 = stepNum === 2 || stepNum === 3 ? stepNum : raw.dotVerdict && raw.dotVerdict !== 'pending' ? 3 : 1;
+
+  return {
+    id: String(raw.id || `idea-${Date.now()}`),
+    title: String(raw.title || 'Naamloos Idee').slice(0, 120),
+    founderName: String(raw.founderName || 'Jurjen').slice(0, 60),
+    authorUid: String(raw.authorUid || 'local-founder').slice(0, 128),
+    shortSummary: String(raw.shortSummary || 'AI-oplossing in ontwikkeling.').slice(0, 600),
+    problemStatement: String(raw.problemStatement || 'Probleemstelling nog aan te vullen.').slice(0, 1500),
+    aiSolution: String(raw.aiSolution || 'AI-oplossing nog aan te vullen.').slice(0, 1500),
+    targetMarket: String(raw.targetMarket || 'B2B Doelmarkt').slice(0, 200),
+    revenueModel: String(
+      raw.revenueModel ||
+        (typeof raw.monthlyPriceEur === 'number' && raw.monthlyPriceEur > 0
+          ? `Maandelijks B2B-abonnement (eerder ingevoerd: €${raw.monthlyPriceEur}/mnd)`
+          : 'Maandelijks abonnement / licentiemodel')
+    ).slice(0, 1500),
+    stage: (['idea', 'validated', 'business_case', 'execution'].includes(String(raw.stage))
+      ? raw.stage
+      : 'idea') as VentureStage,
+    currentStep,
+    votesCount: typeof raw.votesCount === 'number' ? raw.votesCount : 1,
+    dotRawFeedback: String(raw.dotRawFeedback || '').slice(0, 4000),
+    dotVerdict: (['pending', 'go', 'pivot', 'no_go'].includes(String(raw.dotVerdict))
+      ? raw.dotVerdict
+      : 'pending') as DotVerdict,
+    dotScore: typeof raw.dotScore === 'number' ? raw.dotScore : 0,
+    aiRealityScore:
+      typeof raw.aiRealityScore === 'number'
+        ? raw.aiRealityScore
+        : typeof raw.dotScore === 'number'
+        ? raw.dotScore
+        : 0,
+    businessCaseSummary: String(
+      raw.businessCaseSummary ||
+        'Wordt gegenereerd in Stap 3 zodra je in Stap 2 op "Verwerk" klikt.'
+    ).slice(0, 2000),
+    dotSummaryAdvice: String(
+      raw.dotSummaryAdvice || 'Wacht op terugkoppeling van de Dot van Jurjen (Stap 2).'
+    ).slice(0, 2000),
+    dotNextSteps: String(
+      raw.dotNextSteps ||
+        'Kopieer of mail het tekstdocument in Stap 1 naar de Dot van Jurjen en plak de reactie in Stap 2.'
+    ).slice(0, 2000),
+    dotCriticalRisk: String(raw.dotCriticalRisk || 'Nog niet geanalyseerd.').slice(0, 1000),
+    createdAt: String(raw.createdAt || now),
+    updatedAt: String(raw.updatedAt || now),
+  };
 }
 
 function loadStore(): StoreState {
@@ -37,7 +95,28 @@ function loadStore(): StoreState {
       const raw = fs.readFileSync(STORE_PATH, 'utf8');
       const parsed = JSON.parse(raw) as StoreState;
       if (Array.isArray(parsed.founders) && Array.isArray(parsed.ideas)) {
-        return parsed;
+        return {
+          founders: parsed.founders.length > 0 ? parsed.founders : INITIAL_FOUNDERS,
+          ideas: parsed.ideas.map((i) => normalizeIdea(i as unknown as Record<string, unknown>)),
+        };
+      }
+    }
+    // Check legacy store files if v3 doesn't exist yet
+    for (const legacyPath of LEGACY_STORE_PATHS) {
+      if (fs.existsSync(legacyPath)) {
+        const raw = fs.readFileSync(legacyPath, 'utf8');
+        const parsed = JSON.parse(raw) as StoreState;
+        if (Array.isArray(parsed.ideas) && parsed.ideas.length > 0) {
+          const migrated: StoreState = {
+            founders:
+              Array.isArray(parsed.founders) && parsed.founders.length > 0
+                ? parsed.founders
+                : INITIAL_FOUNDERS,
+            ideas: parsed.ideas.map((i) => normalizeIdea(i as unknown as Record<string, unknown>)),
+          };
+          saveStore(migrated);
+          return migrated;
+        }
       }
     }
   } catch (err) {
@@ -79,9 +158,8 @@ function getGenAIClient(): GoogleGenAI | null {
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '2mb' }));
 
-  // Allow CORS so Jurjen's Custom GPT / ChatGPT Dot Actions can call the API directly
   app.use('/api', (req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
@@ -93,7 +171,7 @@ async function startServer() {
     next();
   });
 
-  // 1. Get all ideas + founders (supports ?founder=Name filter for Jurjen's Dot)
+  // 1. Get all ideas + founders
   app.get('/api/ideas', (req, res) => {
     const store = loadStore();
     const founderFilter = typeof req.query.founder === 'string' ? req.query.founder.trim() : '';
@@ -111,7 +189,52 @@ async function startServer() {
     });
   });
 
-  // 2. Add a new founder to the friends roster
+  // 1b. Bidirectional Sync Endpoint: merges client localStorage ideas into server store so ideas are never lost across container restarts
+  app.post('/api/ideas/sync', (req, res) => {
+    const store = loadStore();
+    const incomingIdeas = Array.isArray(req.body?.ideas) ? req.body.ideas : [];
+    const incomingFounders = Array.isArray(req.body?.founders) ? req.body.founders : [];
+    const deletedIds = new Set<string>(Array.isArray(req.body?.deletedIds) ? req.body.deletedIds : []);
+
+    const ideaMap = new Map<string, VentureIdea>();
+    store.ideas.forEach((idea) => {
+      if (!deletedIds.has(idea.id)) {
+        ideaMap.set(idea.id, idea);
+      }
+    });
+
+    incomingIdeas.forEach((raw: Record<string, unknown>) => {
+      if (!raw || typeof raw.id !== 'string' || deletedIds.has(raw.id)) return;
+      const norm = normalizeIdea(raw);
+      const existing = ideaMap.get(norm.id);
+      if (!existing || new Date(norm.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
+        ideaMap.set(norm.id, norm);
+      }
+    });
+
+    store.ideas = Array.from(ideaMap.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    if (incomingFounders.length > 0) {
+      incomingFounders.forEach((f: FounderMember) => {
+        if (f && typeof f.name === 'string' && f.name.trim().length >= 2) {
+          if (!store.founders.some((ef) => ef.name.toLowerCase() === f.name.trim().toLowerCase())) {
+            store.founders.push({
+              name: f.name.trim(),
+              role: f.role || 'Co-Founder',
+              specialty: f.specialty || '€10M+ AI Venture Builder',
+            });
+          }
+        }
+      });
+    }
+
+    saveStore(store);
+    res.json({ founders: store.founders, ideas: store.ideas });
+  });
+
+  // 2. Add a new founder
   app.post('/api/founders', (req, res) => {
     const { name, role, specialty } = req.body ?? {};
     if (!name || typeof name !== 'string' || name.trim().length < 2) {
@@ -174,7 +297,7 @@ async function startServer() {
     res.json({ founders: store.founders });
   });
 
-  // 3. Create a new AI venture idea
+  // 3. Create a new AI venture idea (Starts at Step 1)
   app.post('/api/ideas', (req, res) => {
     const body = req.body ?? {};
     const input = {
@@ -197,7 +320,7 @@ async function startServer() {
     const now = new Date().toISOString();
 
     const newIdea: VentureIdea = {
-      id: `idea-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: typeof body.id === 'string' && body.id ? body.id : `idea-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       title: input.title.trim().slice(0, 120),
       founderName: input.founderName.trim().slice(0, 60),
       authorUid: String(body.authorUid ?? 'local-founder').slice(0, 128),
@@ -207,11 +330,15 @@ async function startServer() {
       targetMarket: input.targetMarket.trim().slice(0, 200),
       revenueModel: input.revenueModel.trim().slice(0, 1500),
       stage: 'idea',
+      currentStep: 1,
       votesCount: 1,
+      dotRawFeedback: '',
       dotVerdict: 'pending',
       dotScore: 0,
-      dotSummaryAdvice: 'Wacht op validatie door de ChatGPT Dot van Jurjen.',
-      dotNextSteps: 'Kopieer of mail het gegenereerde tekstdocument (Stap 1) naar de Dot van Jurjen en voer daarna de feedback in bij Stap 2.',
+      aiRealityScore: 0,
+      businessCaseSummary: 'Wordt gegenereerd in Stap 3 zodra je in Stap 2 op "Verwerk" klikt.',
+      dotSummaryAdvice: 'Wacht op terugkoppeling van de Dot van Jurjen (Stap 2).',
+      dotNextSteps: 'Kopieer of mail het gegenereerde tekstdocument (Stap 1) naar de Dot van Jurjen en plak de terugkoppeling in Stap 2.',
       dotCriticalRisk: 'Nog niet geanalyseerd.',
       createdAt: now,
       updatedAt: now,
@@ -230,7 +357,7 @@ async function startServer() {
     res.status(201).json({ idea: newIdea });
   });
 
-  // 4. Vote on an idea or update its stage / revenue model / content
+  // 4. Update an idea (content, stage, currentStep, votes)
   app.patch('/api/ideas/:id', (req, res) => {
     const store = loadStore();
     const idea = store.ideas.find((i) => i.id === req.params.id);
@@ -264,9 +391,22 @@ async function startServer() {
     if (typeof body.stage === 'string' && ['idea', 'validated', 'business_case', 'execution'].includes(body.stage)) {
       idea.stage = body.stage as VentureStage;
     }
+    if (typeof body.currentStep === 'number' && (body.currentStep === 1 || body.currentStep === 2 || body.currentStep === 3)) {
+      idea.currentStep = body.currentStep;
+    }
     if (body.incrementVote === true) {
       idea.votesCount += 1;
     }
+
+    // Recompute short summary if core fields were updated
+    idea.shortSummary = buildShortSummary({
+      title: idea.title,
+      founderName: idea.founderName,
+      problemStatement: idea.problemStatement,
+      aiSolution: idea.aiSolution,
+      targetMarket: idea.targetMarket,
+      revenueModel: idea.revenueModel,
+    });
 
     idea.updatedAt = new Date().toISOString();
     saveStore(store);
@@ -281,8 +421,8 @@ async function startServer() {
     res.json({ ideas: store.ideas });
   });
 
-  // 5. Direct Webhook / Manual Step 2 Endpoint for Jurjen's ChatGPT Dot Feedback
-  app.post('/api/ideas/:id/advise', (req, res) => {
+  // 5. STEP 2 -> STEP 3 PROCESSOR: Combines all input of the idea + raw feedback from Jurjen's Dot into the Step 3 Dashboard
+  app.post('/api/ideas/:id/process-dot-feedback', async (req, res) => {
     const store = loadStore();
     const idea = store.ideas.find((i) => i.id === req.params.id);
     if (!idea) {
@@ -290,102 +430,76 @@ async function startServer() {
       return;
     }
 
-    const body = req.body ?? {};
-    const verdictRaw = String(body.dotVerdict ?? 'go').toLowerCase();
-    const allowedVerdicts: DotVerdict[] = ['pending', 'go', 'pivot', 'no_go'];
-    idea.dotVerdict = allowedVerdicts.includes(verdictRaw as DotVerdict)
-      ? (verdictRaw as DotVerdict)
-      : 'go';
+    const rawFeedback = String(req.body?.dotRawFeedback ?? '').trim().slice(0, 4000);
+    idea.dotRawFeedback = rawFeedback;
 
-    if (typeof body.dotScore === 'number') {
-      idea.dotScore = Math.max(0, Math.min(100, Math.round(body.dotScore)));
-    }
-    if (typeof body.dotSummaryAdvice === 'string' && body.dotSummaryAdvice.trim().length > 0) {
-      idea.dotSummaryAdvice = body.dotSummaryAdvice.trim().slice(0, 2000);
-    }
-    if (typeof body.dotNextSteps === 'string' && body.dotNextSteps.trim().length > 0) {
-      idea.dotNextSteps = body.dotNextSteps.trim().slice(0, 2000);
-    }
-    if (typeof body.dotCriticalRisk === 'string' && body.dotCriticalRisk.trim().length > 0) {
-      idea.dotCriticalRisk = body.dotCriticalRisk.trim().slice(0, 1000);
-    }
-    if (typeof body.nextStage === 'string' && ['idea', 'validated', 'business_case', 'execution'].includes(body.nextStage)) {
-      idea.stage = body.nextStage as VentureStage;
-    } else if (idea.stage === 'idea') {
-      idea.stage = idea.dotVerdict === 'go' ? 'business_case' : 'validated';
-    }
-    idea.updatedAt = new Date().toISOString();
-    saveStore(store);
-
-    res.json({
-      status: 'validated_by_jurjen_dot',
-      idea,
-    });
-  });
-
-  // 6. Server-side AI Advisory Validation (runs Jurjen's Dot Persona via @google/genai on server, with fallback)
-  app.post('/api/ideas/:id/validate-with-dot', async (req, res) => {
-    const store = loadStore();
-    const idea = store.ideas.find((i) => i.id === req.params.id);
-    if (!idea) {
-      res.status(404).json({ error: 'Idee niet gevonden.' });
-      return;
-    }
-
-    const fallback = generateDeterministicDotAdvice(idea);
+    const deterministic = synthesizeStep3Dashboard(idea, rawFeedback);
     const ai = getGenAIClient();
 
     if (ai) {
       try {
-        const prompt = `Valideer dit AI-businesscase idee voor onze vriendengroep die een >€10.000.000 bedrijf wil bouwen:
-Titel: ${idea.title}
-Bedenker: ${idea.founderName}
-Doelmarkt: ${idea.targetMarket}
-Probleem: ${idea.problemStatement}
-AI-Oplossing: ${idea.aiSolution}
-Hoe we denken er geld mee te verdienen (Verdienmodel): ${idea.revenueModel}
+        const prompt = `Je verwerkt voor onze vriendengroep alle input van een AI-idee PLUS de terugkoppeling van 'De Dot van Jurjen' naar een Stap 3 Beslis-Dashboard.
 
-Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' (onze AI Advisory Board).`;
+INGEBRACHT IDEE (STAP 1):
+- Bedenker: ${idea.founderName}
+- Titel: ${idea.title}
+- Doelmarkt: ${idea.targetMarket}
+- Pijnlijk Probleem: ${idea.problemStatement}
+- AI-Oplossing: ${idea.aiSolution}
+- Hoe we denken er geld mee te verdienen: ${idea.revenueModel}
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+INGEBRACHTE TERUGKOPPELING VAN DE DOT VAN JURJEN (STAP 2):
+"""
+${rawFeedback}
+"""
+
+OPDRACHT VOOR STAP 3 DASHBOARD:
+1. Bepaal de 'dotScore' (0-100) uit de terugkoppeling van de Dot van Jurjen.
+2. Bepaal jouw eigen onafhankelijke 'aiRealityScore' (0-100) voor hoe realistisch dit een >€10M business case wordt.
+3. Hanteer strikt deze 3 scorebanden voor de vervolgstappen:
+   - Als dotScore OF aiRealityScore ONDER DE 50 ligt (<50): Niet levensvatbaar in huidige vorm. Leg uit waarom en adviseer te stoppen of fundamenteel te herontwerpen.
+   - Als de score TUSSEN DE 50 EN 75 ligt (50-74): Idee & Business Case aanscherpen. Geef concrete punten die ${idea.founderName} eerst moet aanscherpen aan het idee of verdienmodel.
+   - Als beide scores TUSSEN DE 75 EN 100 liggen (75-100): Levensvatbaar! Geef concrete vervolgstappen om dit direct met de vriendengroep te valideren en uit te werken.`;
+
+        const aiCall = ai.models.generateContent({
+          model: 'gemini-2.5-flash',
           contents: prompt,
           config: {
             systemInstruction:
-              'Je bent "De Dot van Jurjen", de scherpe, pragmatische AI Advisory Board van een groep van 9 Nederlandse vrienden die samen een AI-bedrijf van >€10 miljoen euro waardering willen bouwen. Je beoordeelt ideeën op: 1) Is het beschreven verdienmodel schaalbaar richting >€10M waarde, 2) Verdedigbare data/workflow moat (geen dunne ChatGPT-wrapper), 3) Concrete vervolgstappen om van idee naar uitwerking en eerste betalende klanten te komen. Schrijf altijd in helder, zakelijk en motiverend Nederlands.',
+              'Je bent de strategische AI Venture Synthesizer van TienMiljoen Lab. Je brengt het ingebrachte idee en de feedback van de Dot van Jurjen samen tot een scherp Stap 3 Dashboard met een eerlijke Realiteitsscore (0-100) en vervolgstappen volgens de drempels <50 (niet levensvatbaar), 50-75 (aanscherpen), en 75-100 (concrete vervolgstappen). Schrijf in helder Nederlands.',
             responseMimeType: 'application/json',
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                dotVerdict: {
-                  type: Type.STRING,
-                  description: "Kies exact een van: 'go', 'pivot', of 'no_go'",
-                },
                 dotScore: {
                   type: Type.INTEGER,
-                  description: 'Score tussen 1 en 100 voor €10M+ potentie',
+                  description: 'Score (0-100) van de Dot van Jurjen op basis van de terugkoppeling',
                 },
-                shortSummary: {
+                aiRealityScore: {
+                  type: Type.INTEGER,
+                  description: 'Jouw eigen objectieve Realiteitsscore (0-100) voor >€10M haalbaarheid',
+                },
+                businessCaseSummary: {
                   type: Type.STRING,
-                  description: 'Korte krachtige samenvatting van het idee in 1-2 zinnen (max 400 tekens)',
+                  description: 'Synthese van de business case en het verdienmodel (max 1000 tekens)',
                 },
                 dotSummaryAdvice: {
                   type: Type.STRING,
-                  description: 'Scherp oordeel van de Dot van Jurjen over het idee en verdienmodel (max 800 tekens)',
+                  description: 'Korte samenvatting van het gezamenlijke oordeel (max 800 tekens)',
                 },
                 dotNextSteps: {
                   type: Type.STRING,
-                  description: '3 genummerde concrete vervolgstappen om van idee naar uitwerking te komen (max 1000 tekens)',
+                  description: 'Genummerde vervolgstappen passend bij de scoreband (<50 niet levensvatbaar, 50-75 aanscherpen, 75-100 concrete actie) (max 1200 tekens)',
                 },
                 dotCriticalRisk: {
                   type: Type.STRING,
-                  description: 'Het grootste risico of aandachtspunt waar de groep op moet letten (max 500 tekens)',
+                  description: 'Belangrijkste risico of aanscherpingspunt (max 500 tekens)',
                 },
               },
               required: [
-                'dotVerdict',
                 'dotScore',
-                'shortSummary',
+                'aiRealityScore',
+                'businessCaseSummary',
                 'dotSummaryAdvice',
                 'dotNextSteps',
                 'dotCriticalRisk',
@@ -394,135 +508,61 @@ Geef een scherp, eerlijk oordeel vanuit het perspectief van 'De Dot van Jurjen' 
           },
         });
 
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('AI synthesis timeout')), 3500)
+        );
+        const response = await Promise.race([aiCall, timeoutPromise]);
+
         const parsed = JSON.parse((response.text ?? '{}').trim());
-        const verdictCandidate = String(parsed.dotVerdict ?? fallback.dotVerdict).toLowerCase();
-        idea.dotVerdict = ['go', 'pivot', 'no_go'].includes(verdictCandidate)
-          ? (verdictCandidate as DotVerdict)
-          : fallback.dotVerdict;
-        idea.dotScore =
+        const dScore =
           typeof parsed.dotScore === 'number'
-            ? Math.max(1, Math.min(100, Math.round(parsed.dotScore)))
-            : fallback.dotScore;
-        if (typeof parsed.shortSummary === 'string' && parsed.shortSummary.trim().length >= 10) {
-          idea.shortSummary = parsed.shortSummary.trim().slice(0, 600);
-        }
-        idea.dotSummaryAdvice = String(parsed.dotSummaryAdvice || fallback.dotSummaryAdvice).slice(0, 2000);
-        idea.dotNextSteps = String(parsed.dotNextSteps || fallback.dotNextSteps).slice(0, 2000);
-        idea.dotCriticalRisk = String(parsed.dotCriticalRisk || fallback.dotCriticalRisk).slice(0, 1000);
-        idea.stage = idea.dotVerdict === 'go' ? 'business_case' : 'validated';
+            ? Math.max(0, Math.min(100, Math.round(parsed.dotScore)))
+            : deterministic.dotScore;
+        const rScore =
+          typeof parsed.aiRealityScore === 'number'
+            ? Math.max(0, Math.min(100, Math.round(parsed.aiRealityScore)))
+            : deterministic.aiRealityScore;
+
+        const band = getViabilityBand(dScore, rScore);
+
+        idea.dotScore = dScore;
+        idea.aiRealityScore = rScore;
+        idea.dotVerdict =
+          band.band === 'not_viable'
+            ? 'no_go'
+            : band.band === 'needs_sharpening'
+            ? 'pivot'
+            : 'go';
+        idea.stage = band.band === 'viable_action_ready' ? 'business_case' : 'validated';
+        idea.currentStep = 3;
+        idea.businessCaseSummary = String(parsed.businessCaseSummary || deterministic.businessCaseSummary).slice(0, 2000);
+        idea.dotSummaryAdvice = String(parsed.dotSummaryAdvice || deterministic.dotSummaryAdvice).slice(0, 2000);
+        idea.dotNextSteps = String(parsed.dotNextSteps || deterministic.dotNextSteps).slice(0, 2000);
+        idea.dotCriticalRisk = String(parsed.dotCriticalRisk || deterministic.dotCriticalRisk).slice(0, 1000);
         idea.updatedAt = new Date().toISOString();
         saveStore(store);
 
-        res.json({ idea, source: 'gemini-dot-engine' });
+        res.json({ idea, source: 'gemini-step3-synthesizer' });
         return;
       } catch (err) {
-        console.warn('Gemini validation fallback triggered:', err);
+        console.warn('Gemini Step 3 synthesis fallback triggered:', err);
       }
     }
 
-    // Apply deterministic Dot validation when API key is not configured or unavailable
-    idea.dotVerdict = fallback.dotVerdict;
-    idea.dotScore = fallback.dotScore;
-    idea.dotSummaryAdvice = fallback.dotSummaryAdvice;
-    idea.dotNextSteps = fallback.dotNextSteps;
-    idea.dotCriticalRisk = fallback.dotCriticalRisk;
-    idea.stage = fallback.recommendedStage;
+    // Apply deterministic Step 3 synthesis
+    idea.dotVerdict = deterministic.dotVerdict;
+    idea.dotScore = deterministic.dotScore;
+    idea.aiRealityScore = deterministic.aiRealityScore;
+    idea.businessCaseSummary = deterministic.businessCaseSummary;
+    idea.dotSummaryAdvice = deterministic.dotSummaryAdvice;
+    idea.dotNextSteps = deterministic.dotNextSteps;
+    idea.dotCriticalRisk = deterministic.dotCriticalRisk;
+    idea.stage = deterministic.recommendedStage;
+    idea.currentStep = 3;
     idea.updatedAt = new Date().toISOString();
     saveStore(store);
 
-    res.json({ idea, source: 'deterministic-dot-engine' });
-  });
-
-  // 7. OpenAPI 3.1.0 Spec so Jurjen's ChatGPT Dot (Custom GPT Action) can connect directly
-  app.get('/api/openapi.json', (req, res) => {
-    const baseUrl =
-      process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL'
-        ? process.env.APP_URL.replace(/\/$/, '')
-        : `${req.protocol}://${req.get('host')}`;
-
-    res.json({
-      openapi: '3.1.0',
-      info: {
-        title: 'TienMiljoen Lab — De Dot van Jurjen Advisory Board API',
-        description:
-          'OpenAPI specificatie waarmee de ChatGPT Dot van Jurjen direct alle ingediende AI-ideeën en verdienmodellen van de vrienden per naam kan opvragen én van validatie en vervolgstappen kan voorzien.',
-        version: '1.1.0',
-      },
-      servers: [{ url: baseUrl }],
-      paths: {
-        '/api/ideas': {
-          get: {
-            operationId: 'listVentureIdeas',
-            summary: 'Haal alle ingediende AI-ideeën op (optioneel gefilterd op naam van een vriend)',
-            parameters: [
-              {
-                name: 'founder',
-                in: 'query',
-                required: false,
-                schema: { type: 'string' },
-                description: 'Filter op naam van de bedenker (bijv. Jurjen, Hans Guido, Gertjan)',
-              },
-            ],
-            responses: {
-              '200': {
-                description: 'Lijst van ideeën inclusief samenvatting, verdienmodel en huidige Dot-status',
-              },
-            },
-          },
-        },
-        '/api/ideas/{id}/advise': {
-          post: {
-            operationId: 'submitJurjenDotValidation',
-            summary: 'Sla het validatie-oordeel en vervolgadvies van de Dot van Jurjen op bij een idee',
-            parameters: [
-              {
-                name: 'id',
-                in: 'path',
-                required: true,
-                schema: { type: 'string' },
-                description: 'ID van het idee',
-              },
-            ],
-            requestBody: {
-              required: true,
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    required: ['dotVerdict', 'dotScore', 'dotSummaryAdvice', 'dotNextSteps', 'dotCriticalRisk'],
-                    properties: {
-                      dotVerdict: {
-                        type: 'string',
-                        enum: ['go', 'pivot', 'no_go'],
-                      },
-                      dotScore: {
-                        type: 'integer',
-                        minimum: 0,
-                        maximum: 100,
-                      },
-                      dotSummaryAdvice: {
-                        type: 'string',
-                      },
-                      dotNextSteps: {
-                        type: 'string',
-                      },
-                      dotCriticalRisk: {
-                        type: 'string',
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            responses: {
-              '200': {
-                description: 'Advies succesvol opgeslagen op de site',
-              },
-            },
-          },
-        },
-      },
-    });
+    res.json({ idea, source: 'deterministic-step3-synthesizer' });
   });
 
   if (process.env.NODE_ENV !== 'production') {

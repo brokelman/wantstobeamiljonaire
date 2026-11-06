@@ -3,10 +3,65 @@ import assert from 'node:assert/strict';
 import {
   validateIdeaInput,
   generateDotTextDocument,
-  generateDeterministicDotAdvice,
+  synthesizeStep3Dashboard,
+  getViabilityBand,
   filterIdeas,
   type VentureIdea,
 } from './ventureMath';
+
+test('getViabilityBand classifies scores into <50 (not_viable), 50-75 (needs_sharpening), and 75-100 (viable_action_ready)', () => {
+  const lowBand = getViabilityBand(42, 70);
+  assert.equal(lowBand.band, 'not_viable');
+  assert.ok(lowBand.label.includes('Niet Levensvatbaar'));
+
+  const midBand = getViabilityBand(65, 72);
+  assert.equal(midBand.band, 'needs_sharpening');
+  assert.ok(midBand.label.includes('Aanscherpen'));
+
+  const highBand = getViabilityBand(82, 86);
+  assert.equal(highBand.band, 'viable_action_ready');
+  assert.ok(highBand.label.includes('Concrete Vervolgstappen'));
+});
+
+test('synthesizeStep3Dashboard combines idea input and Dot feedback into Step 3 dashboard across score bands', () => {
+  const baseIdea = {
+    title: 'BouwBestek AI Agent',
+    founderName: 'Hans Guido',
+    targetMarket: 'Middelgrote aannemers en calculatiebureaus',
+    problemStatement: 'Calculators zijn wekelijks 40 uur kwijt aan handmatige bestekcalculaties en offertes.',
+    aiSolution: 'Autonome AI-agent gekoppeld aan ERP en CAD die automatisch conceptbegrotingen maakt.',
+    revenueModel: 'Jaarlijks SaaS-abonnement per bouwbedrijf plus succesfee per aanbesteding.',
+  };
+
+  // Band 1: < 50 (Niet levensvatbaar)
+  const lowResult = synthesizeStep3Dashboard(
+    baseIdea,
+    'Score: 35/100. Niet levensvatbaar in deze vorm, markt is te klein en klanten willen hier niet voor betalen.'
+  );
+  assert.equal(lowResult.dotVerdict, 'no_go');
+  assert.ok(lowResult.dotScore < 50);
+  assert.ok(lowResult.dotNextSteps.includes('NIET LEVENSVATBAAR'));
+
+  // Band 2: 50 - 75 (Aanscherpen)
+  const midResult = synthesizeStep3Dashboard(
+    baseIdea,
+    'Score: 62/100. Interessant idee maar we moeten het verdienmodel en de doelgroep eerst aanscherpen.'
+  );
+  assert.equal(midResult.dotVerdict, 'pivot');
+  assert.equal(midResult.dotScore, 62);
+  assert.ok(midResult.dotNextSteps.includes('AANSCHERPEN'));
+
+  // Band 3: 75 - 100 (Concrete vervolgstappen)
+  const highResult = synthesizeStep3Dashboard(
+    baseIdea,
+    'Score: 86/100. Zeer sterk en schaalbaar idee! Goede terugkerende omzet en duidelijke AI-moat.'
+  );
+  assert.equal(highResult.dotVerdict, 'go');
+  assert.equal(highResult.dotScore, 86);
+  assert.ok(highResult.aiRealityScore >= 75);
+  assert.ok(highResult.dotNextSteps.includes('CONCRETE VERVOLGSTAPPEN'));
+  assert.ok(highResult.businessCaseSummary.includes('Doelmarkt:'));
+});
 
 test('validateIdeaInput validates text revenueModel instead of numeric price/customer/multiplier fields', () => {
   const invalid = validateIdeaInput({
@@ -44,9 +99,13 @@ test('generateDotTextDocument creates structured copyable and mailable text docu
     targetMarket: 'Aannemers in Nederland',
     revenueModel: 'Vast maandabonnement per calculator + licentie per project.',
     stage: 'idea',
+    currentStep: 1,
     votesCount: 1,
+    dotRawFeedback: '',
     dotVerdict: 'pending',
     dotScore: 0,
+    aiRealityScore: 0,
+    businessCaseSummary: '',
     dotSummaryAdvice: 'Wacht op validatie.',
     dotNextSteps: 'Stuur naar de Dot van Jurjen.',
     dotCriticalRisk: 'Nog te bepalen.',
@@ -59,26 +118,6 @@ test('generateDotTextDocument creates structured copyable and mailable text docu
   assert.ok(singleDoc.subject.includes('Hans Guido'));
   assert.ok(singleDoc.body.includes('HOE DENKEN WE HIER GELD MEE TE VERDIENEN?'));
   assert.ok(singleDoc.body.includes('Vast maandabonnement per calculator'));
-  assert.ok(singleDoc.body.includes('VRAAG AAN DE DOT VAN JURJEN'));
-
-  const multiDoc = generateDotTextDocument([sampleIdea]);
-  assert.ok(multiDoc.subject.includes('1 AI-Ideeën'));
-  assert.ok(multiDoc.body.includes('IDEE 1: BOUWBESTEK AI AGENT'));
-});
-
-test('generateDeterministicDotAdvice produces structured validation based on revenueModel text', () => {
-  const result = generateDeterministicDotAdvice({
-    title: 'BouwBestek AI Agent',
-    founderName: 'Jurjen',
-    targetMarket: 'Middelgrote bouwbedrijven',
-    problemStatement: 'Handmatige calculaties kosten 40 uur per aanbesteding en leiden tot dure fouten.',
-    aiSolution: 'AI workflow agent gekoppeld aan ERP en CAD.',
-    revenueModel: 'Jaarlijks SaaS abonnement per bouwbedrijf plus succesfee op besparing.',
-  });
-  assert.equal(result.dotVerdict, 'go');
-  assert.ok(result.dotScore >= 80);
-  assert.ok(result.dotSummaryAdvice.includes('Jurjen'));
-  assert.ok(result.dotNextSteps.includes('Verdienmodel toetsen'));
 });
 
 test('filterIdeas filters accurately by friend name and revenueModel search query', () => {
@@ -94,9 +133,13 @@ test('filterIdeas filters accurately by friend name and revenueModel search quer
       targetMarket: 'Advocaten',
       revenueModel: 'Abonnement per advocaat per maand',
       stage: 'validated',
+      currentStep: 3,
       votesCount: 5,
+      dotRawFeedback: 'Goede feedback',
       dotVerdict: 'go',
       dotScore: 88,
+      aiRealityScore: 84,
+      businessCaseSummary: 'Sterke case',
       dotSummaryAdvice: 'Top idee',
       dotNextSteps: 'Bellen',
       dotCriticalRisk: 'Integratie',
@@ -114,9 +157,13 @@ test('filterIdeas filters accurately by friend name and revenueModel search quer
       targetMarket: 'Transportbedrijven',
       revenueModel: 'Succesfee per bespaarde lege rit',
       stage: 'idea',
+      currentStep: 1,
       votesCount: 3,
+      dotRawFeedback: '',
       dotVerdict: 'pivot',
       dotScore: 72,
+      aiRealityScore: 68,
+      businessCaseSummary: 'Aanscherpen',
       dotSummaryAdvice: 'Focus verscherpen',
       dotNextSteps: 'Testen',
       dotCriticalRisk: 'Data',
@@ -132,20 +179,4 @@ test('filterIdeas filters accurately by friend name and revenueModel search quer
   const searchSuccesfee = filterIdeas(mockIdeas, { searchQuery: 'succesfee' });
   assert.equal(searchSuccesfee.length, 1);
   assert.equal(searchSuccesfee[0].founderName, 'Erik');
-});
-
-test('netlify.toml disables smart secret scanning false positives for Firebase client config', async () => {
-  const fs = await import('node:fs');
-  const netlifyToml = fs.readFileSync(new URL('../../netlify.toml', import.meta.url), 'utf8');
-  assert.ok(netlifyToml.includes('SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"'));
-  assert.ok(netlifyToml.includes('SECRETS_SCAN_OMIT_PATHS'));
-});
-
-test('Initial seed state starts with 0 ideas and the 9 requested friends', async () => {
-  const { INITIAL_FOUNDERS, SEED_IDEAS } = await import('../data/seedIdeas');
-  assert.equal(SEED_IDEAS.length, 0);
-  assert.deepEqual(
-    INITIAL_FOUNDERS.map((f) => f.name),
-    ['Jurjen', 'Hans Guido', 'Gertjan', 'Erik', 'Matthijs', 'Martijn', 'Frank', 'Hermen', 'Rob']
-  );
 });

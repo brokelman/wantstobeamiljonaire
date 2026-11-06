@@ -35,14 +35,16 @@ service cloud.firestore {
     function isValidIdea(data) {
       return data.keys().hasAll([
         'title', 'founderName', 'authorUid', 'shortSummary', 'problemStatement',
-        'aiSolution', 'targetMarket', 'revenueModel', 'stage', 'votesCount',
-        'dotVerdict', 'dotScore', 'dotSummaryAdvice', 'dotNextSteps',
+        'aiSolution', 'targetMarket', 'revenueModel', 'stage', 'currentStep',
+        'votesCount', 'dotRawFeedback', 'dotVerdict', 'dotScore', 'aiRealityScore',
+        'businessCaseSummary', 'dotSummaryAdvice', 'dotNextSteps',
         'dotCriticalRisk', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
         'title', 'founderName', 'authorUid', 'shortSummary', 'problemStatement',
-        'aiSolution', 'targetMarket', 'revenueModel', 'stage', 'votesCount',
-        'dotVerdict', 'dotScore', 'dotSummaryAdvice', 'dotNextSteps',
+        'aiSolution', 'targetMarket', 'revenueModel', 'stage', 'currentStep',
+        'votesCount', 'dotRawFeedback', 'dotVerdict', 'dotScore', 'aiRealityScore',
+        'businessCaseSummary', 'dotSummaryAdvice', 'dotNextSteps',
         'dotCriticalRisk', 'createdAt', 'updatedAt'
       ]) &&
       data.title is string && data.title.size() >= 3 && data.title.size() <= 120 &&
@@ -54,9 +56,13 @@ service cloud.firestore {
       data.targetMarket is string && data.targetMarket.size() >= 2 && data.targetMarket.size() <= 200 &&
       data.revenueModel is string && data.revenueModel.size() >= 5 && data.revenueModel.size() <= 1500 &&
       data.stage is string && data.stage.size() <= 30 && (data.stage == 'idea' || data.stage == 'validated' || data.stage == 'business_case' || data.stage == 'execution') &&
+      data.currentStep is number && (data.currentStep == 1 || data.currentStep == 2 || data.currentStep == 3) &&
       data.votesCount is number && data.votesCount >= 0 && data.votesCount <= 10000 &&
+      data.dotRawFeedback is string && data.dotRawFeedback.size() <= 4000 &&
       data.dotVerdict is string && data.dotVerdict.size() <= 20 && (data.dotVerdict == 'pending' || data.dotVerdict == 'go' || data.dotVerdict == 'pivot' || data.dotVerdict == 'no_go') &&
       data.dotScore is number && data.dotScore >= 0 && data.dotScore <= 100 &&
+      data.aiRealityScore is number && data.aiRealityScore >= 0 && data.aiRealityScore <= 100 &&
+      data.businessCaseSummary is string && data.businessCaseSummary.size() <= 2000 &&
       data.dotSummaryAdvice is string && data.dotSummaryAdvice.size() <= 2000 &&
       data.dotNextSteps is string && data.dotNextSteps.size() <= 2000 &&
       data.dotCriticalRisk is string && data.dotCriticalRisk.size() <= 1000 &&
@@ -89,12 +95,13 @@ service cloud.firestore {
           (existing().authorUid == request.auth.uid &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'title', 'founderName', 'shortSummary', 'problemStatement',
-              'aiSolution', 'targetMarket', 'revenueModel', 'stage', 'updatedAt'
+              'aiSolution', 'targetMarket', 'revenueModel', 'stage', 'currentStep', 'updatedAt'
             ])
           ) ||
-          // Action 2: Any verified founder in the group votes or updates Jurjen's Dot validation & next steps
+          // Action 2: Any verified founder in the group votes or processes Jurjen's Dot feedback into Step 3
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'votesCount', 'stage', 'dotVerdict', 'dotScore',
+            'votesCount', 'stage', 'currentStep', 'dotRawFeedback', 'dotVerdict',
+            'dotScore', 'aiRealityScore', 'businessCaseSummary',
             'dotSummaryAdvice', 'dotNextSteps', 'dotCriticalRisk', 'updatedAt'
           ])
         );

@@ -2,7 +2,7 @@
   "entities": {
     "Idea": {
       "title": "Idea",
-      "description": "An AI business case idea submitted by one of the founders targeting a >10M EUR venture.",
+      "description": "An AI business case idea submitted by one of the founders targeting a >10M EUR venture across a 3-step validation workflow.",
       "type": "object",
       "properties": {
         "title": {
@@ -59,9 +59,18 @@
           "description": "Current stage in the 10M Venture Funnel",
           "enum": ["idea", "validated", "business_case", "execution"]
         },
+        "currentStep": {
+          "type": "number",
+          "description": "Current step in the 3-step Dot workflow (1, 2, or 3)"
+        },
         "votesCount": {
           "type": "number",
           "description": "Number of founder votes from the friends"
+        },
+        "dotRawFeedback": {
+          "type": "string",
+          "description": "Raw feedback text entered in Step 2 from Jurjen's Dot",
+          "maxLength": 4000
         },
         "dotVerdict": {
           "type": "string",
@@ -72,6 +81,15 @@
           "type": "number",
           "description": "Viability score (0-100) assigned by Jurjen's Dot"
         },
+        "aiRealityScore": {
+          "type": "number",
+          "description": "Independent AI Reality Score (0-100) calculated in Step 3"
+        },
+        "businessCaseSummary": {
+          "type": "string",
+          "description": "Synthesized business case summary in Step 3",
+          "maxLength": 2000
+        },
         "dotSummaryAdvice": {
           "type": "string",
           "description": "Executive validation summary from Jurjen's Dot",
@@ -79,12 +97,12 @@
         },
         "dotNextSteps": {
           "type": "string",
-          "description": "Concrete next steps derived from Jurjen's Dot feedback",
+          "description": "Concrete next steps derived in Step 3 based on score band",
           "maxLength": 2000
         },
         "dotCriticalRisk": {
           "type": "string",
-          "description": "Primary bottleneck or moat risk identified by Jurjen's Dot",
+          "description": "Primary bottleneck or moat risk identified in Step 3",
           "maxLength": 1000
         },
         "createdAt": {
@@ -108,9 +126,13 @@
         "targetMarket",
         "revenueModel",
         "stage",
+        "currentStep",
         "votesCount",
+        "dotRawFeedback",
         "dotVerdict",
         "dotScore",
+        "aiRealityScore",
+        "businessCaseSummary",
         "dotSummaryAdvice",
         "dotNextSteps",
         "dotCriticalRisk",
